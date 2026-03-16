@@ -1,0 +1,165 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EVER2 Overlay Root</title>
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: transparent;
+        }
+
+        iframe {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            border: 0;
+            background: transparent;
+        }
+    </style>
+</head>
+
+<body>
+    <script>
+        (() => {
+            const frames = Object.create(null);
+
+            function normalizeFrameId(frameId) {
+                const id = String(frameId ?? '').trim();
+                return id;
+            }
+
+            function ensureFrame(frameId) {
+                const id = normalizeFrameId(frameId);
+                if (!id) {
+                    return null;
+                }
+
+                if (frames[id]) {
+                    return frames[id];
+                }
+
+                const frame = document.createElement('iframe');
+                frame.name = id;
+                frame.tabIndex = -1;
+                frame.style.zIndex = String(Object.keys(frames).length + 1);
+                document.body.appendChild(frame);
+                frames[id] = frame;
+                return frame;
+            }
+
+            window.everCreateFrameFromUrl = function (frameId, frameUrl) {
+                const frame = ensureFrame(frameId);
+                if (!frame) {
+                    return false;
+                }
+                frame.src = String(frameUrl ?? 'about:blank');
+                return true;
+            };
+
+            window.everCreateFrameFromHtml = function (frameId, html) {
+                const frame = ensureFrame(frameId);
+                if (!frame) {
+                    return false;
+                }
+                frame.srcdoc = String(html ?? '');
+                return true;
+            };
+
+            window.everDestroyFrame = function (frameId) {
+                const id = normalizeFrameId(frameId);
+                if (!id || !frames[id]) {
+                    return false;
+                }
+                const frame = frames[id];
+                delete frames[id];
+                if (frame.parentNode) {
+                    frame.parentNode.removeChild(frame);
+                }
+                return true;
+            };
+
+            window.everPostFrameMessage = function (frameId, payload) {
+                const id = normalizeFrameId(frameId);
+                if (!id || !frames[id] || !frames[id].contentWindow) {
+                    return false;
+                }
+
+                let message = payload;
+                if (typeof payload === 'string') {
+                    try {
+                        message = JSON.parse(payload);
+                    } catch (_) {
+                        message = payload;
+                    }
+                }
+
+                frames[id].contentWindow.postMessage(message, '*');
+                return true;
+            };
+
+            window.everBroadcastCefMessage = function (payload) {
+                window.dispatchEvent(new CustomEvent('ever:cef:message', { detail: payload }));
+                const ids = Object.keys(frames);
+                for (const id of ids) {
+                    window.everPostFrameMessage(id, payload);
+                }
+                return true;
+            };
+
+            function sendViaConsoleBridge(payload) {
+                const jsonPayload = typeof payload === 'string' ? payload : JSON.stringify(payload ?? null);
+                console.log('__EVER2_CEF_BRIDGE__:' + jsonPayload);
+                return true;
+            }
+
+            window.everSendCefMessageToHost = function (payload) {
+                const jsonPayload = typeof payload === 'string' ? payload : JSON.stringify(payload ?? null);
+                if (typeof window.everNativeSendCefMessage === 'function') {
+                    try {
+                        return !!window.everNativeSendCefMessage(jsonPayload);
+                    } catch (_) {
+                        return sendViaConsoleBridge(jsonPayload);
+                    }
+                }
+
+                return sendViaConsoleBridge(jsonPayload);
+            };
+
+            window.addEventListener('message', (event) => {
+                if (!event || event.source === window || event.data == null) {
+                    return;
+                }
+
+                const data = event.data;
+                if (typeof data === 'object' && Object.prototype.hasOwnProperty.call(data, '__everSendCefMessage')) {
+                    window.everSendCefMessageToHost(data.__everSendCefMessage);
+                    return;
+                }
+
+                if (typeof data === 'string') {
+                    window.everSendCefMessageToHost(data);
+                    return;
+                }
+
+                if (typeof data === 'object') {
+                    window.everSendCefMessageToHost(data);
+                }
+            });
+
+            window.everListFrames = function () {
+                return Object.keys(frames);
+            };
+        })();
+    </script>
+</body>
+
+</html>

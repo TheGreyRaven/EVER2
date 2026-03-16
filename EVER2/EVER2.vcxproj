@@ -1,0 +1,302 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build"
+  xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\browser\native_overlay\cef_client_runtime.cpp" />
+    <ClCompile Include="src\browser\native_overlay\native_overlay_cef_lifecycle.cpp" />
+    <ClCompile Include="src\browser\native_overlay\conhost_bridge.cpp" />
+    <ClCompile Include="src\browser\native_overlay\native_overlay_console_stage.cpp" />
+    <ClCompile Include="src\browser\native_overlay\native_overlay_dxgi_hooks.cpp" />
+    <ClCompile Include="src\browser\native_overlay\native_overlay_html_content.cpp" />
+    <ClCompile Include="src\browser\native_overlay\native_overlay_input_forwarding.cpp" />
+    <ClCompile Include="src\browser\native_overlay\native_overlay_input_routing.cpp" />
+    <ClCompile Include="src\browser\native_overlay\native_overlay_logging_utils.cpp" />
+    <ClCompile Include="src\browser\native_overlay\native_overlay_public_api.cpp" />
+    <ClCompile Include="src\browser\native_overlay\native_overlay_string_utils.cpp" />
+    <ClCompile Include="src\browser\native_overlay_renderer.cpp" />
+    <ClCompile Include="src\browser\native_overlay\overlay_render_path.cpp" />
+    <ClCompile Include="src\browser\overlay_manager.cpp" />
+    <ClCompile Include="src\core\dllmain.cpp" />
+    <ClCompile Include="src\core\plugin.cpp" />
+    <ClCompile Include="src\features\commands\command_dispatcher.cpp" />
+    <ClCompile Include="src\features\exit_rockstar_editor\exit_rockstar_editor_action.cpp" />
+    <ClCompile Include="src\features\quit_game\quit_game_action.cpp" />
+    <ClCompile Include="src\hooking\game_function_patterns.cpp" />
+    <ClCompile Include="src\hooking\pattern_scanner.cpp" />
+    <ClCompile Include="src\input\keyboard.cpp" />
+    <ClCompile Include="src\platform\debug_console.cpp" />
+    <ClCompile Include="src\platform\dll_runtime_loader.cpp" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(Platform)'=='x64'">
+    <ClCompile Include="$(CefRoot)\libcef_dll\*.cc" />
+    <ClCompile Include="$(CefRoot)\libcef_dll\base\*.cc" />
+    <ClCompile Include="$(CefRoot)\libcef_dll\cpptoc\*.cc" />
+    <ClCompile Include="$(CefRoot)\libcef_dll\ctocpp\*.cc" />
+    <ClCompile Include="$(CefRoot)\libcef_dll\wrapper\*.cc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Library Include="lib\ScriptHookV.lib" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="resources\resource.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="resources\native_overlay_root.html" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="include\ever\browser\native_overlay_renderer_internal.h" />
+    <ClInclude Include="include\ever\browser\native_overlay_renderer.h" />
+    <ClInclude Include="include\ever\browser\overlay_manager.h" />
+    <ClInclude Include="include\ever\core\plugin.h" />
+    <ClInclude Include="include\ever\features\commands\command_dispatcher.h" />
+    <ClInclude Include="include\ever\features\exit_rockstar_editor\exit_rockstar_editor_action.h" />
+    <ClInclude Include="include\ever\features\quit_game\quit_game_action.h" />
+    <ClInclude Include="include\ever\hooking\game_function_patterns.h" />
+    <ClInclude Include="include\ever\hooking\hook_definitions.h" />
+    <ClInclude Include="include\ever\hooking\hook_utility.h" />
+    <ClInclude Include="include\ever\hooking\import_export_hook.h" />
+    <ClInclude Include="include\ever\hooking\member_function_hook.h" />
+    <ClInclude Include="include\ever\hooking\pattern_scanner.h" />
+    <ClInclude Include="include\ever\hooking\x64_detour.h" />
+    <ClInclude Include="include\ever\platform\debug_console.h" />
+    <ClInclude Include="include\ever\platform\dll_runtime_loader.h" />
+    <ClInclude Include="include\shv\enums.h" />
+    <ClInclude Include="include\shv\invoker.h" />
+    <ClInclude Include="include\shv\keyboard.h" />
+    <ClInclude Include="include\shv\main.h" />
+    <ClInclude Include="include\shv\natives.h" />
+    <ClInclude Include="include\shv\script.h" />
+    <ClInclude Include="include\shv\types.h" />
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{99daeef4-ba3e-48d5-9697-c530fdc918c8}</ProjectGuid>
+    <RootNamespace>EVER2</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <CefRoot>$(ProjectDir)third_party\cef</CefRoot>
+  </PropertyGroup>
+  <PropertyGroup>
+    <VcpkgEnableManifest>true</VcpkgEnableManifest>
+    <VcpkgManifestRoot>$(ProjectDir)</VcpkgManifestRoot>
+    <VcpkgInstalledDir>$(ProjectDir)vcpkg_installed\</VcpkgInstalledDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <TargetExt>.asi</TargetExt>
+    <OutDir>$(SolutionDir)x64\$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)intermediate\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <TargetExt>.asi</TargetExt>
+    <OutDir>$(SolutionDir)x64\$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)intermediate\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_DEBUG;SHVTEMPLATE_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableUAC>false</EnableUAC>
+      <AdditionalLibraryDirectories>$(ProjectDir)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>ScriptHookV.lib;d3d11.lib;dxgi.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;NDEBUG;SHVTEMPLATE_EXPORTS;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableUAC>false</EnableUAC>
+      <AdditionalLibraryDirectories>$(ProjectDir)lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>ScriptHookV.lib;d3d11.lib;dxgi.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;SHVTEMPLATE_EXPORTS;_WINDOWS;_USRDLL;NOMINMAX;WIN32_LEAN_AND_MEAN;WRAPPING_CEF_SHARED;EVER_NATIVE_ENABLE_CEF=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(CefRoot);$(CefRoot)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableUAC>false</EnableUAC>
+      <AdditionalLibraryDirectories>$(ProjectDir)lib;$(CefRoot)\Release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>ScriptHookV.lib;libcef.lib;delayimp.lib;Crypt32.lib;Wintrust.lib;d3d11.lib;dxgi.lib;d3dcompiler.lib;Dbghelp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <DelayLoadDLLs>libcef.dll;PolyHook_2.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
+    </Link>
+    <PreBuildEvent>
+      <Command>powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)tools\setup-cef.ps1" -ProjectDir "$(MSBuildProjectDirectory)" -Platform "$(Platform)" -Configuration "$(Configuration)"</Command>
+    </PreBuildEvent>
+    <PostBuildEvent>
+      <Command>if not exist "$(OutDir)cef_runtime" mkdir "$(OutDir)cef_runtime"
+    if exist "$(CefRoot)\Release\*" xcopy /E /I /Y /D "$(CefRoot)\Release\*" "$(OutDir)cef_runtime\"
+    if exist "$(CefRoot)\Resources\*" xcopy /E /I /Y "$(CefRoot)\Resources" "$(OutDir)cef_runtime\cef_resources\"
+    if exist "$(CefRoot)\Resources\icudtl.dat" copy /Y "$(CefRoot)\Resources\icudtl.dat" "$(OutDir)cef_runtime\icudtl.dat"
+    if exist "$(CefRoot)\Resources\chrome_100_percent.pak" copy /Y "$(CefRoot)\Resources\chrome_100_percent.pak" "$(OutDir)cef_runtime\chrome_100_percent.pak"
+    if exist "$(CefRoot)\Resources\chrome_200_percent.pak" copy /Y "$(CefRoot)\Resources\chrome_200_percent.pak" "$(OutDir)cef_runtime\chrome_200_percent.pak"
+    if exist "$(CefRoot)\Resources\resources.pak" copy /Y "$(CefRoot)\Resources\resources.pak" "$(OutDir)cef_runtime\resources.pak"
+    if not exist "$(OutDir)EVER2" mkdir "$(OutDir)EVER2"
+    if not exist "$(OutDir)EVER2\dlls" mkdir "$(OutDir)EVER2\dlls"
+    if exist "$(OutDir)EVER2\dlls\*.dll" del /Q "$(OutDir)EVER2\dlls\*.dll"
+    if exist "$(OutDir)*.dll" xcopy /Y /D "$(OutDir)*.dll" "$(OutDir)EVER2\dlls\"
+    if not exist "$(ProjectDir)x64\$(Configuration)\deploy" mkdir "$(ProjectDir)x64\$(Configuration)\deploy"
+    if exist "$(ProjectDir)x64\$(Configuration)\deploy\EVER2.asi" del /Q "$(ProjectDir)x64\$(Configuration)\deploy\EVER2.asi"
+    if exist "$(ProjectDir)x64\$(Configuration)\deploy\EVER2.pdb" del /Q "$(ProjectDir)x64\$(Configuration)\deploy\EVER2.pdb"
+    if exist "$(ProjectDir)x64\$(Configuration)\deploy\EVER.asi" del /Q "$(ProjectDir)x64\$(Configuration)\deploy\EVER.asi"
+    if exist "$(ProjectDir)x64\$(Configuration)\deploy\EVER.pdb" del /Q "$(ProjectDir)x64\$(Configuration)\deploy\EVER.pdb"
+    if exist "$(ProjectDir)x64\$(Configuration)\deploy\cef_runtime" rmdir /S /Q "$(ProjectDir)x64\$(Configuration)\deploy\cef_runtime"
+    if not exist "$(ProjectDir)x64\$(Configuration)\deploy\EVER2" mkdir "$(ProjectDir)x64\$(Configuration)\deploy\EVER2"
+    if not exist "$(ProjectDir)x64\$(Configuration)\deploy\EVER2\dlls" mkdir "$(ProjectDir)x64\$(Configuration)\deploy\EVER2\dlls"
+    if exist "$(ProjectDir)x64\$(Configuration)\deploy\EVER2\dlls\*.dll" del /Q "$(ProjectDir)x64\$(Configuration)\deploy\EVER2\dlls\*.dll"
+    if exist "$(TargetPath)" copy /Y "$(TargetPath)" "$(ProjectDir)x64\$(Configuration)\deploy\EVER2.asi"
+    if exist "$(OutDir)$(TargetName).pdb" copy /Y "$(OutDir)$(TargetName).pdb" "$(ProjectDir)x64\$(Configuration)\deploy\EVER2.pdb"
+    if exist "$(OutDir)*.dll" xcopy /Y /D "$(OutDir)*.dll" "$(ProjectDir)x64\$(Configuration)\deploy\EVER2\dlls\"
+    if exist "$(OutDir)cef_runtime\*" xcopy /E /I /Y /D "$(OutDir)cef_runtime\*" "$(ProjectDir)x64\$(Configuration)\deploy\EVER2\cef_runtime\"</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;SHVTEMPLATE_EXPORTS;_WINDOWS;_USRDLL;NOMINMAX;WIN32_LEAN_AND_MEAN;WRAPPING_CEF_SHARED;EVER_NATIVE_ENABLE_CEF=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(CefRoot);$(CefRoot)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableUAC>false</EnableUAC>
+      <AdditionalLibraryDirectories>$(ProjectDir)lib;$(CefRoot)\Release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>ScriptHookV.lib;libcef.lib;delayimp.lib;Crypt32.lib;Wintrust.lib;d3d11.lib;dxgi.lib;d3dcompiler.lib;Dbghelp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <DelayLoadDLLs>libcef.dll;PolyHook_2.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
+    </Link>
+    <PreBuildEvent>
+      <Command>powershell -NoProfile -ExecutionPolicy Bypass -File "$(ProjectDir)tools\setup-cef.ps1" -ProjectDir "$(MSBuildProjectDirectory)" -Platform "$(Platform)" -Configuration "$(Configuration)"</Command>
+    </PreBuildEvent>
+    <PostBuildEvent>
+      <Command>if not exist "$(OutDir)cef_runtime" mkdir "$(OutDir)cef_runtime"
+    if exist "$(CefRoot)\Release\*" xcopy /E /I /Y /D "$(CefRoot)\Release\*" "$(OutDir)cef_runtime\"
+    if exist "$(CefRoot)\Resources\*" xcopy /E /I /Y "$(CefRoot)\Resources" "$(OutDir)cef_runtime\cef_resources\"
+    if exist "$(CefRoot)\Resources\icudtl.dat" copy /Y "$(CefRoot)\Resources\icudtl.dat" "$(OutDir)cef_runtime\icudtl.dat"
+    if exist "$(CefRoot)\Resources\chrome_100_percent.pak" copy /Y "$(CefRoot)\Resources\chrome_100_percent.pak" "$(OutDir)cef_runtime\chrome_100_percent.pak"
+    if exist "$(CefRoot)\Resources\chrome_200_percent.pak" copy /Y "$(CefRoot)\Resources\chrome_200_percent.pak" "$(OutDir)cef_runtime\chrome_200_percent.pak"
+    if exist "$(CefRoot)\Resources\resources.pak" copy /Y "$(CefRoot)\Resources\resources.pak" "$(OutDir)cef_runtime\resources.pak"
+    if not exist "$(OutDir)EVER2" mkdir "$(OutDir)EVER2"
+    if not exist "$(OutDir)EVER2\dlls" mkdir "$(OutDir)EVER2\dlls"
+    if exist "$(OutDir)EVER2\dlls\*.dll" del /Q "$(OutDir)EVER2\dlls\*.dll"
+    if exist "$(OutDir)*.dll" xcopy /Y /D "$(OutDir)*.dll" "$(OutDir)EVER2\dlls\"
+    if not exist "$(ProjectDir)x64\$(Configuration)\deploy" mkdir "$(ProjectDir)x64\$(Configuration)\deploy"
+    if exist "$(ProjectDir)x64\$(Configuration)\deploy\EVER2.asi" del /Q "$(ProjectDir)x64\$(Configuration)\deploy\EVER2.asi"
+    if exist "$(ProjectDir)x64\$(Configuration)\deploy\EVER2.pdb" del /Q "$(ProjectDir)x64\$(Configuration)\deploy\EVER2.pdb"
+    if exist "$(ProjectDir)x64\$(Configuration)\deploy\EVER.asi" del /Q "$(ProjectDir)x64\$(Configuration)\deploy\EVER.asi"
+    if exist "$(ProjectDir)x64\$(Configuration)\deploy\EVER.pdb" del /Q "$(ProjectDir)x64\$(Configuration)\deploy\EVER.pdb"
+    if exist "$(ProjectDir)x64\$(Configuration)\deploy\cef_runtime" rmdir /S /Q "$(ProjectDir)x64\$(Configuration)\deploy\cef_runtime"
+    if not exist "$(ProjectDir)x64\$(Configuration)\deploy\EVER2" mkdir "$(ProjectDir)x64\$(Configuration)\deploy\EVER2"
+    if not exist "$(ProjectDir)x64\$(Configuration)\deploy\EVER2\dlls" mkdir "$(ProjectDir)x64\$(Configuration)\deploy\EVER2\dlls"
+    if exist "$(ProjectDir)x64\$(Configuration)\deploy\EVER2\dlls\*.dll" del /Q "$(ProjectDir)x64\$(Configuration)\deploy\EVER2\dlls\*.dll"
+    if exist "$(TargetPath)" copy /Y "$(TargetPath)" "$(ProjectDir)x64\$(Configuration)\deploy\EVER2.asi"
+    if exist "$(OutDir)$(TargetName).pdb" copy /Y "$(OutDir)$(TargetName).pdb" "$(ProjectDir)x64\$(Configuration)\deploy\EVER2.pdb"
+    if exist "$(OutDir)*.dll" xcopy /Y /D "$(OutDir)*.dll" "$(ProjectDir)x64\$(Configuration)\deploy\EVER2\dlls\"
+    if exist "$(OutDir)cef_runtime\*" xcopy /E /I /Y /D "$(OutDir)cef_runtime\*" "$(ProjectDir)x64\$(Configuration)\deploy\EVER2\cef_runtime\"</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

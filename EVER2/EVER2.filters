@@ -1,0 +1,206 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0"
+  xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Source Files\browser">
+      <UniqueIdentifier>{564915D9-78F9-462D-A7FD-D4EA2E30B0C2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\core">
+      <UniqueIdentifier>{2D7B1262-437A-49BB-A2AD-66EBE443A0D8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\input">
+      <UniqueIdentifier>{4D85131C-2F91-4CCB-8ECA-95F6A8D0CC66}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\platform">
+      <UniqueIdentifier>{09A3DA85-8D1F-4CA0-AEF2-FD5E2A3E017C}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\hooking">
+      <UniqueIdentifier>{39F67A55-3070-4B7D-8FE5-8EB4C8FE4B26}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\features">
+      <UniqueIdentifier>{C28BCAB9-9DC0-4A31-A9CC-9EC975A0B835}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Header Files\ever">
+      <UniqueIdentifier>{1817B221-E408-4F20-9A47-CF8A2670A2BE}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\shv">
+      <UniqueIdentifier>{57F0A041-8396-4462-B628-6E52C88F694B}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\ever\hooking">
+      <UniqueIdentifier>{1316D8DC-3886-4609-8386-2D98B4A75C09}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\ever\features">
+      <UniqueIdentifier>{7784B9ED-958B-4CD4-85E5-31D0B4A4A62A}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resource Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\browser\native_overlay\cef_client_runtime.cpp">
+      <Filter>Source Files\browser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\browser\native_overlay\native_overlay_cef_lifecycle.cpp">
+      <Filter>Source Files\browser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\browser\native_overlay\conhost_bridge.cpp">
+      <Filter>Source Files\browser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\browser\native_overlay\native_overlay_console_stage.cpp">
+      <Filter>Source Files\browser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\browser\native_overlay\native_overlay_dxgi_hooks.cpp">
+      <Filter>Source Files\browser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\browser\native_overlay\native_overlay_html_content.cpp">
+      <Filter>Source Files\browser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\browser\native_overlay\native_overlay_input_forwarding.cpp">
+      <Filter>Source Files\browser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\browser\native_overlay\native_overlay_input_routing.cpp">
+      <Filter>Source Files\browser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\browser\native_overlay\native_overlay_logging_utils.cpp">
+      <Filter>Source Files\browser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\browser\native_overlay\native_overlay_public_api.cpp">
+      <Filter>Source Files\browser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\browser\native_overlay\native_overlay_string_utils.cpp">
+      <Filter>Source Files\browser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\browser\native_overlay_renderer.cpp">
+      <Filter>Source Files\browser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\browser\native_overlay\overlay_render_path.cpp">
+      <Filter>Source Files\browser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\browser\overlay_manager.cpp">
+      <Filter>Source Files\browser</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\dllmain.cpp">
+      <Filter>Source Files\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\core\plugin.cpp">
+      <Filter>Source Files\core</Filter>
+    </ClCompile>
+    <ClCompile Include="src\features\commands\command_dispatcher.cpp">
+      <Filter>Source Files\features</Filter>
+    </ClCompile>
+    <ClCompile Include="src\features\exit_rockstar_editor\exit_rockstar_editor_action.cpp">
+      <Filter>Source Files\features</Filter>
+    </ClCompile>
+    <ClCompile Include="src\features\quit_game\quit_game_action.cpp">
+      <Filter>Source Files\features</Filter>
+    </ClCompile>
+    <ClCompile Include="src\hooking\game_function_patterns.cpp">
+      <Filter>Source Files\hooking</Filter>
+    </ClCompile>
+    <ClCompile Include="src\hooking\pattern_scanner.cpp">
+      <Filter>Source Files\hooking</Filter>
+    </ClCompile>
+    <ClCompile Include="src\input\keyboard.cpp">
+      <Filter>Source Files\input</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\debug_console.cpp">
+      <Filter>Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="src\platform\dll_runtime_loader.cpp">
+      <Filter>Source Files\platform</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Library Include="lib\ScriptHookV.lib" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="resources\resource.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="resources\native_overlay_root.html">
+      <Filter>Resource Files</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="include\ever\browser\native_overlay_renderer_internal.h">
+      <Filter>Header Files\ever</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ever\browser\native_overlay_renderer.h">
+      <Filter>Header Files\ever</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ever\browser\overlay_manager.h">
+      <Filter>Header Files\ever</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ever\core\plugin.h">
+      <Filter>Header Files\ever</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ever\features\commands\command_dispatcher.h">
+      <Filter>Header Files\ever\features</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ever\features\exit_rockstar_editor\exit_rockstar_editor_action.h">
+      <Filter>Header Files\ever\features</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ever\features\quit_game\quit_game_action.h">
+      <Filter>Header Files\ever\features</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ever\hooking\game_function_patterns.h">
+      <Filter>Header Files\ever\hooking</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ever\hooking\hook_definitions.h">
+      <Filter>Header Files\ever\hooking</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ever\hooking\hook_utility.h">
+      <Filter>Header Files\ever\hooking</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ever\hooking\import_export_hook.h">
+      <Filter>Header Files\ever\hooking</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ever\hooking\member_function_hook.h">
+      <Filter>Header Files\ever\hooking</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ever\hooking\pattern_scanner.h">
+      <Filter>Header Files\ever\hooking</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ever\hooking\x64_detour.h">
+      <Filter>Header Files\ever\hooking</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ever\platform\debug_console.h">
+      <Filter>Header Files\ever</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ever\platform\dll_runtime_loader.h">
+      <Filter>Header Files\ever</Filter>
+    </ClInclude>
+    <ClInclude Include="include\shv\types.h">
+      <Filter>Header Files\shv</Filter>
+    </ClInclude>
+    <ClInclude Include="include\shv\enums.h">
+      <Filter>Header Files\shv</Filter>
+    </ClInclude>
+    <ClInclude Include="include\shv\invoker.h">
+      <Filter>Header Files\shv</Filter>
+    </ClInclude>
+    <ClInclude Include="include\shv\keyboard.h">
+      <Filter>Header Files\shv</Filter>
+    </ClInclude>
+    <ClInclude Include="include\shv\main.h">
+      <Filter>Header Files\shv</Filter>
+    </ClInclude>
+    <ClInclude Include="include\shv\natives.h">
+      <Filter>Header Files\shv</Filter>
+    </ClInclude>
+    <ClInclude Include="include\shv\script.h">
+      <Filter>Header Files\shv</Filter>
+    </ClInclude>
+  </ItemGroup>
+</Project>
