@@ -17,7 +17,9 @@ declare global {
   }
 }
 
-const sendEditorCommand = (action: "quit_game" | "exit_rockstar_editor") => {
+const sendEditorCommand = (
+  action: "quit_game" | "exit_rockstar_editor" | "load_project",
+) => {
   const payload = JSON.stringify({
     action,
     requestId: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -52,6 +54,7 @@ export const primaryItems: MenuItemConfig[] = [
     label: "Load project",
     description:
       "Open an existing saved project and continue editing where you left off.",
+    onClick: () => sendEditorCommand("load_project"),
   },
   {
     icon: Clapperboard,

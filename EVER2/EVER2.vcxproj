@@ -39,6 +39,7 @@
     <ClCompile Include="src\features\commands\command_dispatcher.cpp" />
     <ClCompile Include="src\features\exit_rockstar_editor\exit_rockstar_editor_action.cpp" />
     <ClCompile Include="src\features\quit_game\quit_game_action.cpp" />
+    <ClCompile Include="src\features\replay_project_logger\replay_project_logger.cpp" />
     <ClCompile Include="src\hooking\game_function_patterns.cpp" />
     <ClCompile Include="src\hooking\pattern_scanner.cpp" />
     <ClCompile Include="src\input\keyboard.cpp" />
@@ -69,6 +70,7 @@
     <ClInclude Include="include\ever\features\commands\command_dispatcher.h" />
     <ClInclude Include="include\ever\features\exit_rockstar_editor\exit_rockstar_editor_action.h" />
     <ClInclude Include="include\ever\features\quit_game\quit_game_action.h" />
+    <ClInclude Include="include\ever\features\replay_project_logger\replay_project_logger.h" />
     <ClInclude Include="include\ever\hooking\game_function_patterns.h" />
     <ClInclude Include="include\ever\hooking\hook_definitions.h" />
     <ClInclude Include="include\ever\hooking\hook_utility.h" />

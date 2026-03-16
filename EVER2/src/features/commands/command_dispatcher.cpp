@@ -3,6 +3,7 @@
 #include "ever/browser/native_overlay_renderer.h"
 #include "ever/features/exit_rockstar_editor/exit_rockstar_editor_action.h"
 #include "ever/features/quit_game/quit_game_action.h"
+#include "ever/features/replay_project_logger/replay_project_logger.h"
 #include "ever/platform/debug_console.h"
 
 #include <windows.h>
@@ -179,12 +180,25 @@ void DispatchMessage(const std::string& payload) {
         return;
     }
 
+    if (action == "load_project") {
+        ever::features::replay_project_logger::LogSnapshotForUiTrigger();
+        ever::platform::LogDebug(L"[EVER2] Command 'load_project' accepted for replay logger test.");
+        SendCommandResponse(
+            action,
+            request_id,
+            "accepted",
+            "Load project test trigger sent. Check EVER2 debug log for replay enumeration snapshots.");
+        return;
+    }
+
     SendCommandResponse(action, request_id, "error", "Unknown action.");
 }
 
 }
 
 void PumpQueuedCommands() {
+    ever::features::replay_project_logger::EnsureHookInstalled();
+
     int processed = 0;
     std::string payload;
 

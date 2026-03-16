@@ -103,6 +103,9 @@
     <ClCompile Include="src\features\quit_game\quit_game_action.cpp">
       <Filter>Source Files\features</Filter>
     </ClCompile>
+    <ClCompile Include="src\features\replay_project_logger\replay_project_logger.cpp">
+      <Filter>Source Files\features</Filter>
+    </ClCompile>
     <ClCompile Include="src\hooking\game_function_patterns.cpp">
       <Filter>Source Files\hooking</Filter>
     </ClCompile>
@@ -152,6 +155,9 @@
       <Filter>Header Files\ever\features</Filter>
     </ClInclude>
     <ClInclude Include="include\ever\features\quit_game\quit_game_action.h">
+      <Filter>Header Files\ever\features</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ever\features\replay_project_logger\replay_project_logger.h">
       <Filter>Header Files\ever\features</Filter>
     </ClInclude>
     <ClInclude Include="include\ever\hooking\game_function_patterns.h">

@@ -5,6 +5,7 @@ namespace ever::hooking {
 enum class GameFunctionPatternId {
     StartShutdownTasks,
     VideoEditorClose,
+    ReplayEnumerateProjects,
 };
 
 // Returns a null-terminated array of candidate pattern strings for a target id
