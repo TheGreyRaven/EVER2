@@ -18,7 +18,7 @@ declare global {
 }
 
 const sendEditorCommand = (
-  action: "quit_game" | "exit_rockstar_editor" | "load_project",
+  action: "quit_game" | "exit_rockstar_editor" | "load_project"
 ) => {
   const payload = JSON.stringify({
     action,
