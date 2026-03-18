@@ -2,11 +2,11 @@ import { Card } from "@/components/ui/card"
 import { exitItems, primaryItems } from "./data"
 import { EditorFooter } from "./footer"
 import { EditorHeader } from "./header"
-import { InfoPanel } from "./info-panel"
 import { MenuItem } from "./menu-item"
 import { Separator } from "@/components/ui/separator"
 
 export const RockstarEditor = () => {
+
   return (
     <Card className="gap-0 rounded-2xl border-white/6.5 bg-[#0c1016] py-0 ring-0 shadow-[0_40px_100px_rgba(0,0,0,0.85)]">
       <EditorHeader />
@@ -37,12 +37,6 @@ export const RockstarEditor = () => {
             </nav>
           </div>
 
-        </div>
-
-        <Separator orientation="vertical" className="bg-white/5.5" />
-
-        <div className="min-w-0 flex-1">
-          <InfoPanel />
         </div>
 
       </div>

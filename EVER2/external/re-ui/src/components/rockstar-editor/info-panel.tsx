@@ -1,8 +1,18 @@
 import { TriangleAlert } from "lucide-react"
 
 import { primaryItems } from "./data"
+import type { ReplayProjectsPayload } from "./types"
 
-export const InfoPanel = () => {
+type InfoPanelProps = {
+  projectsPayload: ReplayProjectsPayload | null
+}
+
+export const InfoPanel = ({ projectsPayload }: InfoPanelProps) => {
+  const hasProjects =
+    projectsPayload != null &&
+    Array.isArray(projectsPayload.projects) &&
+    projectsPayload.projects.length > 0
+
   return (
     <aside className="flex h-full flex-col">
       <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden px-8 py-8 text-center">
@@ -60,6 +70,54 @@ export const InfoPanel = () => {
             </div>
           )
         })}
+      </div>
+
+      <div className="px-5 pb-5 pt-1">
+        <div className="mb-2 flex items-center justify-between">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/18">
+            Loaded Projects
+          </p>
+          <p className="text-[10px] text-white/28">
+            {projectsPayload?.projectCount ?? 0}
+          </p>
+        </div>
+
+        {!hasProjects && (
+          <div className="rounded-xl border border-white/6 bg-white/2 px-4 py-3 text-[11px] leading-relaxed text-white/28">
+            Click "Load project" to fetch montage/clip data from the native replay subsystem.
+          </div>
+        )}
+
+        {hasProjects && (
+          <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+            {projectsPayload.projects.map((project) => (
+              <div
+                key={`${project.index}-${project.projectName}-${project.path}`}
+                className="rounded-xl border border-white/6 bg-white/2 px-3 py-2"
+              >
+                <p className="text-[12px] font-semibold text-white/62">
+                  {project.projectName || "Unnamed project"}
+                </p>
+                <p className="mt-1 text-[10px] text-white/30">
+                  clips: {project.clipCount} | duration: {project.durationMs}ms
+                </p>
+
+                <div className="mt-2 space-y-1">
+                  {project.clips.map((clip) => (
+                    <p
+                      key={`${project.index}-${clip.index}-${clip.path ?? clip.uid ?? "clip"}`}
+                      className="truncate text-[10px] text-white/32"
+                      title={clip.path ?? ""}
+                    >
+                      {clip.uid != null ? `${clip.uid} -> ` : ""}
+                      {clip.path ?? "<no clip path>"}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
     </aside>

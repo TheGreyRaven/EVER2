@@ -5,6 +5,9 @@
 #include "ever/features/quit_game/quit_game_action.h"
 #include "ever/features/replay_project_logger/replay_project_logger.h"
 #include "ever/platform/debug_console.h"
+#include "ever/utils/command_json_utils.h"
+
+#include <nlohmann/json.hpp>
 
 #include <windows.h>
 
@@ -15,23 +18,9 @@ namespace ever::features::commands {
 
 namespace {
 
-constexpr int kMaxMessagesPerPump = 16;
+using Json = nlohmann::json;
 
-std::string EscapeJson(const std::string& in) {
-    std::string out;
-    out.reserve(in.size() + 8);
-    for (char c : in) {
-        switch (c) {
-        case '\\': out += "\\\\"; break;
-        case '"': out += "\\\""; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
-        default: out.push_back(c); break;
-        }
-    }
-    return out;
-}
+constexpr int kMaxMessagesPerPump = 16;
 
 std::string WideToUtf8(const std::wstring& value) {
     if (value.empty()) {
@@ -68,76 +57,42 @@ std::string WideToUtf8(const std::wstring& value) {
     return out;
 }
 
-bool ExtractJsonStringField(const std::string& json, const char* key, std::string& out) {
-    out.clear();
-
-    const std::string needle = std::string("\"") + key + "\"";
-    const size_t key_pos = json.find(needle);
-    if (key_pos == std::string::npos) {
-        return false;
-    }
-
-    const size_t colon_pos = json.find(':', key_pos + needle.size());
-    if (colon_pos == std::string::npos) {
-        return false;
-    }
-
-    size_t value_pos = colon_pos + 1;
-    while (value_pos < json.size() && (json[value_pos] == ' ' || json[value_pos] == '\t' || json[value_pos] == '\n' || json[value_pos] == '\r')) {
-        ++value_pos;
-    }
-
-    if (value_pos >= json.size() || json[value_pos] != '"') {
-        return false;
-    }
-
-    ++value_pos;
-    bool escaped = false;
-    for (size_t i = value_pos; i < json.size(); ++i) {
-        const char c = json[i];
-        if (!escaped && c == '\\') {
-            escaped = true;
-            continue;
-        }
-        if (!escaped && c == '"') {
-            return true;
-        }
-
-        out.push_back(c);
-        escaped = false;
-    }
-
-    out.clear();
-    return false;
-}
-
 void SendCommandResponse(
     const std::string& action,
     const std::string& request_id,
     const char* status,
-    const std::string& message) {
-    std::string response =
-        std::string("{\"event\":\"ever2_command_response\",\"action\":\"") + EscapeJson(action) +
-        "\",\"status\":\"" + EscapeJson(status) + "\"";
-
+    const std::string& message,
+    const Json& extra = Json::object()) {
+    Json response;
+    response["event"] = "ever2_command_response";
+    response["action"] = action;
+    response["status"] = status;
     if (!request_id.empty()) {
-        response += ",\"requestId\":\"" + EscapeJson(request_id) + "\"";
+        response["requestId"] = request_id;
     }
-
     if (!message.empty()) {
-        response += ",\"message\":\"" + EscapeJson(message) + "\"";
+        response["message"] = message;
     }
 
-    response += "}";
-    ever::browser::SendCefMessage(response);
+    if (extra.is_object()) {
+        for (auto it = extra.begin(); it != extra.end(); ++it) {
+            response[it.key()] = it.value();
+        }
+    }
+
+    ever::browser::SendCefMessage(response.dump());
 }
 
 void DispatchMessage(const std::string& payload) {
-    std::string action;
-    std::string request_id;
+    ever::utils::command_json::ParsedCommandPayload parsed;
+    std::string parse_error;
+    if (!ever::utils::command_json::ParseCommandPayload(payload, parsed, parse_error)) {
+        SendCommandResponse("", "", "error", parse_error);
+        return;
+    }
 
-    ExtractJsonStringField(payload, "action", action);
-    ExtractJsonStringField(payload, "requestId", request_id);
+    const std::string& action = parsed.action;
+    const std::string& request_id = parsed.request_id;
 
     {
         const std::wstring message =
@@ -182,12 +137,29 @@ void DispatchMessage(const std::string& payload) {
 
     if (action == "load_project") {
         ever::features::replay_project_logger::LogSnapshotForUiTrigger();
-        ever::platform::LogDebug(L"[EVER2] Command 'load_project' accepted for replay logger test.");
-        SendCommandResponse(
-            action,
-            request_id,
-            "accepted",
-            "Load project test trigger sent. Check EVER2 debug log for replay enumeration snapshots.");
+        std::string projects_payload;
+        std::wstring load_error;
+        if (!ever::features::replay_project_logger::TryBuildProjectsJsonForUiTrigger(projects_payload, load_error)) {
+            const std::wstring message = L"[EVER2] Command 'load_project' failed: " + load_error;
+            ever::platform::LogDebug(message.c_str());
+            SendCommandResponse(action, request_id, "error", WideToUtf8(load_error));
+            return;
+        }
+
+        Json projects_event = Json::parse(projects_payload, nullptr, false);
+        if (!projects_event.is_discarded() && projects_event.is_object() && !request_id.empty()) {
+            projects_event["requestId"] = request_id;
+            ever::browser::SendCefMessage(projects_event.dump());
+        } else {
+            ever::browser::SendCefMessage(projects_payload);
+        }
+
+        ever::platform::LogDebug(L"[EVER2] Command 'load_project' accepted and replay data payload was sent.");
+        Json extra;
+        if (!projects_event.is_discarded() && projects_event.is_object()) {
+            extra["projectCount"] = projects_event.value("projectCount", 0);
+        }
+        SendCommandResponse(action, request_id, "accepted", "Replay project payload sent to UI.", extra);
         return;
     }
 

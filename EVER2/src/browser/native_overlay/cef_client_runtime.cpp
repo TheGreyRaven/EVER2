@@ -283,6 +283,184 @@ private:
     IMPLEMENT_REFCOUNTING(Ever2UiSchemeHandlerFactory);
 };
 
+class Ever2AssetResourceHandler final : public CefResourceHandler {
+public:
+    Ever2AssetResourceHandler() = default;
+
+    bool ProcessRequest(CefRefPtr<CefRequest> request, CefRefPtr<CefCallback> callback) override {
+        status_code_ = 404;
+        response_data_.clear();
+        response_offset_ = 0;
+        mime_type_ = "text/plain";
+
+        if (request == nullptr) {
+            callback->Continue();
+            return true;
+        }
+
+        CefURLParts parts;
+        if (!CefParseURL(request->GetURL(), parts)) {
+            callback->Continue();
+            return true;
+        }
+
+        std::string path_raw = CefString(&parts.path).ToString();
+        if (path_raw.size() > 1 && path_raw.front() == '/') {
+            path_raw = path_raw.substr(1);
+        } else {
+            callback->Continue();
+            return true;
+        }
+
+        const std::string path_utf8 = UrlDecode(path_raw);
+        if (path_utf8.empty()) {
+            callback->Continue();
+            return true;
+        }
+
+        const std::filesystem::path abs_path(Utf8ToWide(path_utf8));
+
+        if (!abs_path.is_absolute()) {
+            callback->Continue();
+            return true;
+        }
+
+        // Security: reject ".." traversal
+        for (const auto& part : abs_path) {
+            if (part == L".." || part == L".") {
+                callback->Continue();
+                return true;
+            }
+        }
+
+        // Only allow image/media file types
+        const std::string ext = ToLowerCopy(abs_path.extension().string());
+        const bool allowed_type = (ext == ".jpg" || ext == ".jpeg" || ext == ".png" ||
+                                   ext == ".gif" || ext == ".webp" || ext == ".ico");
+        if (!allowed_type) {
+            callback->Continue();
+            return true;
+        }
+
+        std::error_code ec;
+        if (!std::filesystem::exists(abs_path, ec) || !std::filesystem::is_regular_file(abs_path, ec)) {
+            callback->Continue();
+            return true;
+        }
+
+        std::ifstream file(abs_path, std::ios::binary);
+        if (!file) {
+            callback->Continue();
+            return true;
+        }
+
+        file.seekg(0, std::ios::end);
+        const std::streamsize length = file.tellg();
+        file.seekg(0, std::ios::beg);
+
+        // Reject files larger than 10 MB to keep memory usage bounded
+        constexpr std::streamsize kMaxBytes = 10 * 1024 * 1024;
+        if (length <= 0 || length > kMaxBytes) {
+            callback->Continue();
+            return true;
+        }
+
+        response_data_.resize(static_cast<size_t>(length));
+        if (!file.read(response_data_.data(), length)) {
+            response_data_.clear();
+            callback->Continue();
+            return true;
+        }
+
+        status_code_ = 200;
+        mime_type_ = GuessMimeType(abs_path);
+        callback->Continue();
+        return true;
+    }
+
+    void GetResponseHeaders(CefRefPtr<CefResponse> response, int64& response_length, CefString&) override {
+        response->SetStatus(status_code_);
+        response->SetMimeType(mime_type_);
+
+        CefResponse::HeaderMap headers;
+        headers.emplace("access-control-allow-origin", "*");
+        headers.emplace("access-control-allow-methods", "GET, OPTIONS");
+        headers.emplace("cache-control", "no-cache, must-revalidate");
+        response->SetHeaderMap(headers);
+
+        response_length = (status_code_ == 200) ? static_cast<int64>(response_data_.size()) : 0;
+    }
+
+    bool ReadResponse(void* data_out, int bytes_to_read, int& bytes_read, CefRefPtr<CefCallback>) override {
+        bytes_read = 0;
+        if (status_code_ != 200 || data_out == nullptr || bytes_to_read <= 0) {
+            return false;
+        }
+
+        const size_t remaining = response_data_.size() - response_offset_;
+        if (remaining == 0) {
+            return false;
+        }
+
+        const size_t chunk = (std::min)(remaining, static_cast<size_t>(bytes_to_read));
+        memcpy(data_out, response_data_.data() + response_offset_, chunk);
+        response_offset_ += chunk;
+        bytes_read = static_cast<int>(chunk);
+        return true;
+    }
+
+    void Cancel() override {
+        response_data_.clear();
+        response_offset_ = 0;
+    }
+
+private:
+    static std::string UrlDecode(const std::string& encoded) {
+        std::string result;
+        result.reserve(encoded.size());
+        for (size_t i = 0; i < encoded.size(); ) {
+            if (encoded[i] == '%' && i + 2 < encoded.size()) {
+                const auto from_hex = [](char c) -> int {
+                    if (c >= '0' && c <= '9') return c - '0';
+                    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                    return -1;
+                };
+                const int hi = from_hex(encoded[i + 1]);
+                const int lo = from_hex(encoded[i + 2]);
+                if (hi >= 0 && lo >= 0) {
+                    result += static_cast<char>((hi << 4) | lo);
+                    i += 3;
+                    continue;
+                }
+            }
+            result += encoded[i++];
+        }
+        return result;
+    }
+
+    int status_code_ = 404;
+    std::string mime_type_ = "text/plain";
+    std::vector<char> response_data_;
+    size_t response_offset_ = 0;
+
+    IMPLEMENT_REFCOUNTING(Ever2AssetResourceHandler);
+};
+
+class Ever2AssetSchemeHandlerFactory final : public CefSchemeHandlerFactory {
+public:
+    Ever2AssetSchemeHandlerFactory() = default;
+
+    CefRefPtr<CefResourceHandler> Create(CefRefPtr<CefBrowser>,
+                                         CefRefPtr<CefFrame>,
+                                         const CefString&,
+                                         CefRefPtr<CefRequest>) override {
+        return new Ever2AssetResourceHandler();
+    }
+
+    IMPLEMENT_REFCOUNTING(Ever2AssetSchemeHandlerFactory);
+};
+
 std::wstring CompactConsoleSource(const CefString& source) {
     const std::string source_utf8 = source.ToString();
     if (source_utf8.rfind("data:text/html", 0) == 0) {
@@ -695,6 +873,16 @@ bool RegisterNativeOverlayUiSchemeHandler(const std::filesystem::path& ui_root) 
 
     const std::wstring message = L"[EVER2] UI scheme registered: https://ever2-ui/* root=" + root.wstring();
     Log(message.c_str());
+    return true;
+}
+
+bool RegisterNativeOverlayAssetSchemeHandler() {
+    if (!CefRegisterSchemeHandlerFactory("https", "ever2-asset", new Ever2AssetSchemeHandlerFactory())) {
+        Log(L"[EVER2] Asset scheme registration failed: CefRegisterSchemeHandlerFactory returned false.");
+        return false;
+    }
+
+    Log(L"[EVER2] Asset scheme registered: https://ever2-asset/*");
     return true;
 }
 

@@ -4,20 +4,27 @@
 #include "ever/hooking/pattern_scanner.h"
 #include "ever/hooking/x64_detour.h"
 #include "ever/platform/debug_console.h"
+#include "ever/utils/replay_clip_utils.h"
+
+#include <nlohmann/json.hpp>
 
 #include <windows.h>
 
 #include <atomic>
 #include <algorithm>
 #include <cstdint>
+#include <ctime>
 #include <cstring>
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace ever::features::replay_project_logger {
 
 namespace {
+
+using Json = nlohmann::json;
 
 constexpr size_t kOffsetHasEnumeratedClips = 0x4FFA8;
 constexpr size_t kOffsetHasEnumeratedMontages = 0x4FFA9;
@@ -27,6 +34,14 @@ constexpr size_t kOffsetProjectCacheBase = 0x47F20;
 constexpr size_t kProjectEntrySize = 0x148;
 constexpr size_t kProjectClipArrayOffset = 0x138;
 constexpr size_t kMaxProjectsInCache = 100;
+constexpr size_t kProjectPathOffset = 0x31;
+constexpr size_t kProjectPathMaxBytes = 260;
+
+constexpr size_t kReplayInfoMontagePtrOffset = 0xAD8;
+constexpr size_t kReplayInfoPathPtrOffset = 0xAF0;
+constexpr size_t kReplayInfoPathLenOffset = 0xAF8;
+constexpr size_t kReplayInfoFilenamePtrOffset = 0xB00;
+constexpr size_t kReplayInfoFilenameLenOffset = 0xB08;
 
 struct ReplaySnapshot {
     bool has_enumerated_clips = false;
@@ -51,15 +66,19 @@ using EnumerateFn = uint64_t(__fastcall*)(
     uint64_t a11,
     uint64_t a12);
 
-std::shared_ptr<PLH::x64Detour> g_detour;
-EnumerateFn g_original = nullptr;
+using LoadMontageFn = uint32_t(__fastcall*)(void* this_ptr, void* replay_info, uint64_t* out_extended_result);
+
+std::shared_ptr<PLH::x64Detour> g_enumerate_detour;
+EnumerateFn g_enumerate_original = nullptr;
+std::shared_ptr<PLH::x64Detour> g_load_montage_detour;
+LoadMontageFn g_load_montage_original = nullptr;
 std::mutex g_install_mutex;
 std::atomic<uint64_t> g_hook_hits{0};
+std::atomic<uint64_t> g_load_montage_hook_hits{0};
 std::atomic<uint32_t> g_install_attempt_count{0};
 std::atomic<ULONGLONG> g_last_install_attempt_tick{0};
 ReplaySnapshot g_last_snapshot{};
 bool g_has_last_snapshot = false;
-std::atomic<uint64_t> g_last_this_ptr{0};
 
 using RtlLookupFunctionEntryFn = PRUNTIME_FUNCTION(NTAPI*)(DWORD64, PDWORD64, PUNWIND_HISTORY_TABLE);
 
@@ -169,6 +188,119 @@ uint64_t ResolveFunctionStartFromUnwind(uint64_t hit_address, uint64_t module_ba
     return function_start;
 }
 
+uint64_t ResolvePatternToFunctionStart(
+    ever::hooking::PatternScanner& scanner,
+    ever::hooking::GameFunctionPatternId pattern_id,
+    const wchar_t* log_prefix,
+    int* out_candidate_index,
+    int max_candidates = -1) {
+    const char* const* candidates = ever::hooking::GetGameFunctionPatternCandidates(pattern_id);
+    if (candidates == nullptr) {
+        const std::wstring message = std::wstring(log_prefix) + L": no pattern candidates registered.";
+        ever::platform::LogDebug(message.c_str());
+        return 0;
+    }
+
+    uint64_t hit_address = 0;
+    int matched_candidate = -1;
+    for (int i = 0; candidates[i] != nullptr; ++i) {
+        if (max_candidates > 0 && i >= max_candidates) {
+            break;
+        }
+
+        uint64_t candidate_hit = 0;
+        const std::wstring message =
+            std::wstring(log_prefix) + L": scanning candidate index=" + std::to_wstring(i) + L" (exact).";
+        ever::platform::LogDebug(message.c_str());
+
+        const std::string pattern_key = "ReplayProjectLoggerCandidate_" + std::to_string(i);
+        scanner.AddPattern(pattern_key, candidates[i], &candidate_hit);
+        scanner.PerformScan();
+        if (candidate_hit != 0) {
+            hit_address = candidate_hit;
+            matched_candidate = i;
+            break;
+        }
+    }
+
+    if (out_candidate_index != nullptr) {
+        *out_candidate_index = matched_candidate;
+    }
+
+    if (hit_address == 0) {
+        const std::wstring message =
+            std::wstring(log_prefix) + L": none of the patterns matched. attempts=" +
+            std::to_wstring(g_install_attempt_count.load(std::memory_order_relaxed));
+        ever::platform::LogDebug(message.c_str());
+        return 0;
+    }
+
+    const uint64_t function_start = ResolveFunctionStartFromUnwind(
+        hit_address,
+        scanner.GetModuleBase(),
+        scanner.GetModuleSize());
+    if (function_start == 0) {
+        const std::wstring message =
+            std::wstring(log_prefix) + L": pattern matched at " + std::to_wstring(hit_address) +
+            L" but function start could not be resolved through unwind metadata.";
+        ever::platform::LogDebug(message.c_str());
+        return 0;
+    }
+
+    const std::wstring message =
+        std::wstring(log_prefix) + L": resolved candidateIndex=" + std::to_wstring(matched_candidate) +
+        L" match=" + std::to_wstring(hit_address) +
+        L" functionStart=" + std::to_wstring(function_start);
+    ever::platform::LogDebug(message.c_str());
+    return function_start;
+}
+
+std::string ReadAsciiCStringAt(const char* address, size_t max_len) {
+    if (!IsReadableAddressRange(address, 1) || max_len == 0) {
+        return std::string();
+    }
+
+    std::string out;
+    out.reserve(max_len);
+    for (size_t i = 0; i < max_len; ++i) {
+        if (!IsReadableAddressRange(address + i, 1)) {
+            break;
+        }
+        const char c = address[i];
+        if (c == '\0') {
+            break;
+        }
+        if (!ever::utils::replay_clip::IsLikelyPrintable(c)) {
+            break;
+        }
+        out.push_back(c);
+    }
+    return out;
+}
+
+std::string ReadReplayInfoString(const uint8_t* info_base, size_t ptr_offset, size_t len_offset) {
+    if (info_base == nullptr) {
+        return std::string();
+    }
+
+    uint16_t len16 = 0;
+    if (!ReadObjectAt(info_base, len_offset, len16)) {
+        return std::string();
+    }
+
+    uint64_t ptr = 0;
+    if (!ReadObjectAt(info_base, ptr_offset, ptr)) {
+        return std::string();
+    }
+
+    if (ptr == 0) {
+        return std::string();
+    }
+
+    const size_t max_len = std::min<size_t>(len16 > 0 ? len16 : 260, 260);
+    return ReadAsciiCStringAt(reinterpret_cast<const char*>(ptr), max_len);
+}
+
 void LogSnapshot(const wchar_t* reason, const void* this_ptr, const ReplaySnapshot& snapshot) {
     const std::wstring message =
         L"[EVER2] Replay project enumerate " + std::wstring(reason) +
@@ -182,8 +314,92 @@ void LogSnapshot(const wchar_t* reason, const void* this_ptr, const ReplaySnapsh
     ever::platform::LogDebug(message.c_str());
 }
 
-bool IsLikelyPrintable(char c) {
-    return c >= 32 && c <= 126;
+std::wstring ToWide(const std::string& text) {
+    return std::wstring(text.begin(), text.end());
+}
+
+std::string WideToUtf8(const std::wstring& value) {
+    if (value.empty()) {
+        return std::string();
+    }
+
+    const int required = WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        value.c_str(),
+        static_cast<int>(value.size()),
+        nullptr,
+        0,
+        nullptr,
+        nullptr);
+    if (required <= 0) {
+        return std::string();
+    }
+
+    std::string out(static_cast<size_t>(required), '\0');
+    const int written = WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        value.c_str(),
+        static_cast<int>(value.size()),
+        out.data(),
+        required,
+        nullptr,
+        nullptr);
+    if (written <= 0) {
+        return std::string();
+    }
+
+    return out;
+}
+
+std::string GetFilenameNoExtension(const std::string& path) {
+    if (path.empty()) {
+        return std::string();
+    }
+
+    size_t file_start = path.find_last_of("\\/");
+    if (file_start == std::string::npos) {
+        file_start = 0;
+    } else {
+        ++file_start;
+    }
+
+    std::string filename = path.substr(file_start);
+    const size_t dot = filename.find_last_of('.');
+    if (dot != std::string::npos) {
+        filename.erase(dot);
+    }
+    return filename;
+}
+
+std::wstring FormatLastWriteTimestamp(uint64_t raw_time) {
+    if (raw_time == 0) {
+        return L"<unknown>";
+    }
+
+    uint64_t unix_seconds = raw_time;
+
+    constexpr uint64_t kFileTimeUnixOffsetSeconds = 11644473600ULL;
+    constexpr uint64_t kFileTimeTicksPerSecond = 10000000ULL;
+    if (raw_time > (kFileTimeUnixOffsetSeconds * kFileTimeTicksPerSecond)) {
+        unix_seconds = (raw_time / kFileTimeTicksPerSecond) - kFileTimeUnixOffsetSeconds;
+    } else if (raw_time > 1000000000000ULL) {
+        unix_seconds = raw_time / 1000ULL;
+    }
+
+    const time_t tt = static_cast<time_t>(unix_seconds);
+    tm local_tm{};
+    if (localtime_s(&local_tm, &tt) != 0) {
+        return L"<invalid>";
+    }
+
+    wchar_t buffer[64]{};
+    if (wcsftime(buffer, _countof(buffer), L"%Y-%m-%d %H:%M:%S", &local_tm) == 0) {
+        return L"<invalid>";
+    }
+
+    return std::wstring(buffer);
 }
 
 std::string GuessPathFromProjectEntry(const uint8_t* entry_base) {
@@ -192,7 +408,7 @@ std::string GuessPathFromProjectEntry(const uint8_t* entry_base) {
     for (size_t i = 0; i + 8 < kProjectEntrySize; ++i) {
         const char* candidate = reinterpret_cast<const char*>(entry_base + i);
         size_t len = 0;
-        while ((i + len) < kProjectEntrySize && candidate[len] != '\0' && IsLikelyPrintable(candidate[len])) {
+        while ((i + len) < kProjectEntrySize && candidate[len] != '\0' && ever::utils::replay_clip::IsLikelyPrintable(candidate[len])) {
             ++len;
         }
 
@@ -244,49 +460,103 @@ void LogDecodedProjects(const ReplaySnapshot& snapshot) {
         }
 
         uint32_t duration_ms = 0;
+        uint8_t is_corrupt = 0;
+        uint32_t file_hash = 0;
         uint64_t size_bytes = 0;
         uint64_t last_write = 0;
         uint64_t user_id = 0;
+        uint8_t mark_delete = 0;
         uint64_t clip_array_ptr = 0;
         uint16_t clip_count16 = 0;
         uint16_t clip_capacity16 = 0;
-        uint32_t clip_count32 = 0;
-        uint32_t clip_capacity32 = 0;
 
         ReadObjectAt(entry, 0x08, duration_ms);
-        ReadObjectAt(entry, 0x10, size_bytes);
-        ReadObjectAt(entry, 0x18, last_write);
-        ReadObjectAt(entry, 0x20, user_id);
+        ReadObjectAt(entry, 0x0C, is_corrupt);
+        ReadObjectAt(entry, 0x10, file_hash);
+        ReadObjectAt(entry, 0x18, size_bytes);
+        ReadObjectAt(entry, 0x20, last_write);
+        ReadObjectAt(entry, 0x28, user_id);
+        ReadObjectAt(entry, 0x30, mark_delete);
         ReadObjectAt(entry, kProjectClipArrayOffset + 0x00, clip_array_ptr);
         ReadObjectAt(entry, kProjectClipArrayOffset + 0x08, clip_count16);
         ReadObjectAt(entry, kProjectClipArrayOffset + 0x0A, clip_capacity16);
-        ReadObjectAt(entry, kProjectClipArrayOffset + 0x08, clip_count32);
-        ReadObjectAt(entry, kProjectClipArrayOffset + 0x0C, clip_capacity32);
 
-        const std::string path_guess = GuessPathFromProjectEntry(entry);
-        std::wstring path_w = path_guess.empty() ? L"<unknown>" : std::wstring(path_guess.begin(), path_guess.end());
+        std::string path_guess = ReadAsciiCStringAt(
+            reinterpret_cast<const char*>(entry + kProjectPathOffset),
+            kProjectPathMaxBytes);
+        if (path_guess.empty()) {
+            path_guess = GuessPathFromProjectEntry(entry);
+        }
+        const std::wstring path_w = path_guess.empty() ? L"<unknown>" : ToWide(path_guess);
+        const std::string project_name = GetFilenameNoExtension(path_guess);
+        const std::wstring project_name_w = project_name.empty() ? L"<unknown>" : ToWide(project_name);
+        const std::wstring last_write_local = FormatLastWriteTimestamp(last_write);
+        std::string preview_candidate = ever::utils::replay_clip::GuessPreviewFromProjectClipNames(path_guess);
+        std::string preview_source = "project-clip-string";
+        if (preview_candidate.empty()) {
+            preview_candidate = ever::utils::replay_clip::GuessPreviewPath(path_guess);
+            preview_source = "heuristic";
+        }
+        const std::vector<std::string> project_clip_names =
+            ever::utils::replay_clip::ExtractProjectClipBaseNames(path_guess);
+
+        const std::wstring preview_candidate_w = preview_candidate.empty() ? L"<pending-project-clip-string>" : ToWide(preview_candidate);
+        const std::string preview_disk_path = ever::utils::replay_clip::ReplayUriToDiskPath(preview_candidate);
+        const bool preview_exists = !preview_candidate.empty() && ever::utils::replay_clip::FileExists(preview_disk_path);
 
         std::wstring message =
             L"[EVER2] Replay project[" + std::to_wstring(i) +
+            L"] projectName=" + project_name_w +
             L"] durationMs=" + std::to_wstring(duration_ms) +
+            L" corrupt=" + std::to_wstring(is_corrupt != 0 ? 1 : 0) +
+            L" fileHash=" + std::to_wstring(file_hash) +
             L" sizeBytes=" + std::to_wstring(size_bytes) +
             L" userId=" + std::to_wstring(user_id) +
-            L" lastWrite=" + std::to_wstring(last_write) +
+            L" lastWriteRaw=" + std::to_wstring(last_write) +
+            L" lastWriteLocal=" + last_write_local +
+            L" markDelete=" + std::to_wstring(mark_delete != 0 ? 1 : 0) +
             L" path=" + path_w +
+            L" previewCandidate=" + preview_candidate_w +
+            L" previewDiskPath=" + ToWide(preview_disk_path) +
+            L" previewExists=" + std::to_wstring(preview_exists ? 1 : 0) +
+            L" previewSource=" + ToWide(preview_source) +
             L" clipArrayPtr=" + std::to_wstring(clip_array_ptr) +
             L" clipCount16=" + std::to_wstring(clip_count16) +
             L" clipCap16=" + std::to_wstring(clip_capacity16) +
-            L" clipCount32=" + std::to_wstring(clip_count32) +
-            L" clipCap32=" + std::to_wstring(clip_capacity32);
+            L" projectClipNameCount=" + std::to_wstring(project_clip_names.size());
+
+        if (!project_clip_names.empty()) {
+            std::wstringstream clip_file_stream;
+            const size_t clip_file_dump_count = std::min<size_t>(project_clip_names.size(), 12);
+            for (size_t clip_idx = 0; clip_idx < clip_file_dump_count; ++clip_idx) {
+                if (clip_idx > 0) {
+                    clip_file_stream << L",";
+                }
+
+                const std::string clip_replay_path = ever::utils::replay_clip::BuildClipReplayPath(project_clip_names[clip_idx]);
+                const bool clip_exists = ever::utils::replay_clip::FileExists(
+                    ever::utils::replay_clip::ReplayUriToDiskPath(clip_replay_path));
+                clip_file_stream << ToWide(clip_replay_path) << L"(" << (clip_exists ? 1 : 0) << L")";
+            }
+
+            message += L" clipFiles=" + clip_file_stream.str();
+            if (project_clip_names.size() > clip_file_dump_count) {
+                message += L" clipFilesTruncated=" + std::to_wstring(project_clip_names.size() - clip_file_dump_count);
+            }
+        }
+
+        std::vector<uint32_t> clip_uids;
 
         if (clip_array_ptr != 0 && clip_count16 > 0 && clip_count16 < 256) {
             const auto* clip_base = reinterpret_cast<const uint8_t*>(clip_array_ptr);
             if (IsReadableAddressRange(clip_base, static_cast<size_t>(clip_count16) * 0x10)) {
                 std::wstringstream uid_stream;
                 const uint16_t uid_dump_count = std::min<uint16_t>(clip_count16, 12);
+                clip_uids.reserve(uid_dump_count);
                 for (uint16_t uid_index = 0; uid_index < uid_dump_count; ++uid_index) {
                     uint32_t uid = 0;
                     ReadObjectAt(clip_base, static_cast<size_t>(uid_index) * 0x10 + 0x08, uid);
+                    clip_uids.push_back(uid);
                     if (uid_index > 0) {
                         uid_stream << L",";
                     }
@@ -296,10 +566,168 @@ void LogDecodedProjects(const ReplaySnapshot& snapshot) {
             }
         }
 
+        if (!clip_uids.empty() && !project_clip_names.empty()) {
+            std::wstringstream uid_path_stream;
+            const size_t pair_count = std::min<size_t>(clip_uids.size(), project_clip_names.size());
+            for (size_t pair_idx = 0; pair_idx < pair_count; ++pair_idx) {
+                if (pair_idx > 0) {
+                    uid_path_stream << L",";
+                }
+
+                const std::string clip_replay_path = ever::utils::replay_clip::BuildClipReplayPath(project_clip_names[pair_idx]);
+                uid_path_stream << clip_uids[pair_idx] << L"->" << ToWide(clip_replay_path);
+            }
+            message += L" uidToClipPath=" + uid_path_stream.str();
+        }
+
         ever::platform::LogDebug(message.c_str());
     }
 
     ever::platform::LogDebug(L"[EVER2] Replay project decode end.");
+}
+
+bool BuildProjectsJsonFromSnapshot(const ReplaySnapshot& snapshot, std::string& out_json, std::wstring& out_error) {
+    out_json.clear();
+    out_error.clear();
+
+    if (snapshot.project_cache_base == 0) {
+        out_error = L"Replay project cache is not available yet.";
+        return false;
+    }
+
+    uint32_t total = snapshot.montage_count;
+    if (total > kMaxProjectsInCache) {
+        total = kMaxProjectsInCache;
+    }
+
+    Json payload;
+    payload["event"] = "ever2_load_project_data";
+    payload["status"] = "ready";
+    payload["projects"] = Json::array();
+
+    for (uint32_t i = 0; i < total; ++i) {
+        const uint64_t entry_addr = snapshot.project_cache_base + (static_cast<uint64_t>(i) * snapshot.project_entry_size);
+        const auto* entry = reinterpret_cast<const uint8_t*>(entry_addr);
+        if (!IsReadableAddressRange(entry, kProjectEntrySize)) {
+            continue;
+        }
+
+        uint32_t duration_ms = 0;
+        uint8_t is_corrupt = 0;
+        uint32_t file_hash = 0;
+        uint64_t size_bytes = 0;
+        uint64_t last_write = 0;
+        uint64_t user_id = 0;
+        uint8_t mark_delete = 0;
+        uint64_t clip_array_ptr = 0;
+        uint16_t clip_count16 = 0;
+        uint16_t clip_capacity16 = 0;
+
+        ReadObjectAt(entry, 0x08, duration_ms);
+        ReadObjectAt(entry, 0x0C, is_corrupt);
+        ReadObjectAt(entry, 0x10, file_hash);
+        ReadObjectAt(entry, 0x18, size_bytes);
+        ReadObjectAt(entry, 0x20, last_write);
+        ReadObjectAt(entry, 0x28, user_id);
+        ReadObjectAt(entry, 0x30, mark_delete);
+        ReadObjectAt(entry, kProjectClipArrayOffset + 0x00, clip_array_ptr);
+        ReadObjectAt(entry, kProjectClipArrayOffset + 0x08, clip_count16);
+        ReadObjectAt(entry, kProjectClipArrayOffset + 0x0A, clip_capacity16);
+
+        std::string path_guess = ReadAsciiCStringAt(
+            reinterpret_cast<const char*>(entry + kProjectPathOffset),
+            kProjectPathMaxBytes);
+        if (path_guess.empty()) {
+            path_guess = GuessPathFromProjectEntry(entry);
+        }
+
+        const std::string project_name = GetFilenameNoExtension(path_guess);
+        const std::wstring last_write_local_w = FormatLastWriteTimestamp(last_write);
+        const std::string last_write_local = WideToUtf8(last_write_local_w);
+        std::string preview_candidate = ever::utils::replay_clip::GuessPreviewFromProjectClipNames(path_guess);
+        if (preview_candidate.empty()) {
+            preview_candidate = ever::utils::replay_clip::GuessPreviewPath(path_guess);
+        }
+
+        const std::vector<std::string> project_clip_names =
+            ever::utils::replay_clip::ExtractProjectClipBaseNames(path_guess);
+
+        std::vector<uint32_t> clip_uids;
+        if (clip_array_ptr != 0 && clip_count16 > 0 && clip_count16 < 256) {
+            const auto* clip_base = reinterpret_cast<const uint8_t*>(clip_array_ptr);
+            if (IsReadableAddressRange(clip_base, static_cast<size_t>(clip_count16) * 0x10)) {
+                const uint16_t uid_dump_count = std::min<uint16_t>(clip_count16, 256);
+                clip_uids.reserve(uid_dump_count);
+                for (uint16_t uid_index = 0; uid_index < uid_dump_count; ++uid_index) {
+                    uint32_t uid = 0;
+                    ReadObjectAt(clip_base, static_cast<size_t>(uid_index) * 0x10 + 0x08, uid);
+                    clip_uids.push_back(uid);
+                }
+            }
+        }
+
+        Json project;
+        project["index"] = i;
+        project["projectName"] = project_name;
+        project["path"] = path_guess;
+        project["durationMs"] = duration_ms;
+        project["corrupt"] = (is_corrupt != 0);
+        project["fileHash"] = file_hash;
+        project["sizeBytes"] = size_bytes;
+        project["userId"] = user_id;
+        project["lastWriteRaw"] = last_write;
+        project["lastWriteLocal"] = last_write_local;
+        project["markDelete"] = (mark_delete != 0);
+        project["previewCandidate"] = preview_candidate;
+        project["previewDiskPath"] = ever::utils::replay_clip::ReplayUriToDiskPath(preview_candidate);
+        project["previewExists"] =
+            !preview_candidate.empty() &&
+            ever::utils::replay_clip::FileExists(ever::utils::replay_clip::ReplayUriToDiskPath(preview_candidate));
+        project["clipArrayPtr"] = clip_array_ptr;
+        project["clipCount16"] = clip_count16;
+        project["clipCap16"] = clip_capacity16;
+        project["clipBaseNameCount"] = project_clip_names.size();
+
+        Json clips = Json::array();
+        const size_t max_clip_rows = std::max(project_clip_names.size(), clip_uids.size());
+        for (size_t clip_index = 0; clip_index < max_clip_rows; ++clip_index) {
+            Json clip;
+            clip["index"] = clip_index;
+
+            if (clip_index < project_clip_names.size()) {
+                const std::string& base_name = project_clip_names[clip_index];
+                const std::string clip_path = ever::utils::replay_clip::BuildClipReplayPath(base_name);
+                clip["baseName"] = base_name;
+                clip["path"] = clip_path;
+                clip["diskPath"] = ever::utils::replay_clip::ReplayUriToDiskPath(clip_path);
+                clip["exists"] = ever::utils::replay_clip::FileExists(
+                    ever::utils::replay_clip::ReplayUriToDiskPath(clip_path));
+                // Clip thumbnail: same base name with .jpg extension
+                const std::string clip_preview_replay_path =
+                    std::string("replay:/videos/clips/") + base_name + ".jpg";
+                const std::string clip_preview_disk_path =
+                    ever::utils::replay_clip::ReplayUriToDiskPath(clip_preview_replay_path);
+                clip["previewPath"] = clip_preview_replay_path;
+                clip["previewDiskPath"] = clip_preview_disk_path;
+                clip["previewExists"] =
+                    ever::utils::replay_clip::FileExists(clip_preview_disk_path);
+            }
+
+            if (clip_index < clip_uids.size()) {
+                clip["uid"] = clip_uids[clip_index];
+            }
+
+            clips.push_back(std::move(clip));
+        }
+
+        project["clips"] = std::move(clips);
+        project["clipCount"] = project["clips"].size();
+        payload["projects"].push_back(std::move(project));
+    }
+
+    payload["projectCount"] = payload["projects"].size();
+    out_json = payload.dump();
+    return true;
 }
 
 bool ShouldLogTransition(const ReplaySnapshot& before, const ReplaySnapshot& after) {
@@ -332,9 +760,9 @@ uint64_t __fastcall HookedEnumerate(
     uint64_t a11,
     uint64_t a12) {
     thread_local bool reentrant = false;
-    if (reentrant || g_original == nullptr) {
-        if (g_original != nullptr) {
-            return g_original(this_ptr, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12);
+    if (reentrant || g_enumerate_original == nullptr) {
+        if (g_enumerate_original != nullptr) {
+            return g_enumerate_original(this_ptr, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12);
         }
         return 0;
     }
@@ -343,9 +771,7 @@ uint64_t __fastcall HookedEnumerate(
 
     ReplaySnapshot before{};
     const bool before_ok = CaptureSnapshot(this_ptr, before);
-    g_last_this_ptr.store(reinterpret_cast<uint64_t>(this_ptr), std::memory_order_release);
-
-    const uint64_t result = g_original(this_ptr, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12);
+    const uint64_t result = g_enumerate_original(this_ptr, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12);
 
     ReplaySnapshot after{};
     const bool after_ok = CaptureSnapshot(this_ptr, after);
@@ -372,65 +798,86 @@ uint64_t __fastcall HookedEnumerate(
     return result;
 }
 
+uint32_t __fastcall HookedLoadMontage(void* this_ptr, void* replay_info, uint64_t* out_extended_result) {
+    thread_local bool reentrant = false;
+    if (reentrant || g_load_montage_original == nullptr) {
+        if (g_load_montage_original != nullptr) {
+            return g_load_montage_original(this_ptr, replay_info, out_extended_result);
+        }
+        return 1;
+    }
+
+    reentrant = true;
+
+    const auto* info_base = static_cast<const uint8_t*>(replay_info);
+    uint64_t montage_ptr = 0;
+    if (info_base != nullptr) {
+        ReadObjectAt(info_base, kReplayInfoMontagePtrOffset, montage_ptr);
+    }
+    const std::string file_path = ReadReplayInfoString(info_base, kReplayInfoPathPtrOffset, kReplayInfoPathLenOffset);
+    const std::string filename = ReadReplayInfoString(info_base, kReplayInfoFilenamePtrOffset, kReplayInfoFilenameLenOffset);
+    const std::string project_name = !filename.empty() ? GetFilenameNoExtension(filename) : GetFilenameNoExtension(file_path);
+    const std::string best_path_seed = !file_path.empty() ? file_path : filename;
+    std::string preview_candidate = ever::utils::replay_clip::GuessPreviewFromProjectClipNames(best_path_seed);
+    if (preview_candidate.empty()) {
+        preview_candidate = ever::utils::replay_clip::GuessPreviewPath(best_path_seed);
+    }
+    const bool preview_exists = ever::utils::replay_clip::FileExists(
+        ever::utils::replay_clip::ReplayUriToDiskPath(preview_candidate));
+
+    const uint32_t ret_code = g_load_montage_original(this_ptr, replay_info, out_extended_result);
+    uint64_t extended_result = 0;
+    if (out_extended_result != nullptr && IsReadableAddressRange(out_extended_result, sizeof(uint64_t))) {
+        extended_result = *out_extended_result;
+    }
+
+    const uint64_t hit_count = g_load_montage_hook_hits.fetch_add(1, std::memory_order_relaxed) + 1;
+    const std::wstring message =
+        L"[EVER2] Replay LoadMontage hook: hits=" + std::to_wstring(hit_count) +
+        L" this=" + std::to_wstring(reinterpret_cast<uintptr_t>(this_ptr)) +
+        L" replayInfo=" + std::to_wstring(reinterpret_cast<uintptr_t>(replay_info)) +
+        L" montagePtr=" + std::to_wstring(montage_ptr) +
+        L" retCode=" + std::to_wstring(ret_code) +
+        L" extendedResult=" + std::to_wstring(extended_result) +
+        L" projectName=" + ToWide(project_name) +
+        L" previewCandidate=" + ToWide(preview_candidate) +
+        L" previewExists=" + std::to_wstring(preview_exists ? 1 : 0) +
+        L" path=" + std::wstring(file_path.begin(), file_path.end()) +
+        L" filename=" + std::wstring(filename.begin(), filename.end());
+    ever::platform::LogDebug(message.c_str());
+
+    ReplaySnapshot snapshot{};
+    if (CaptureSnapshot(this_ptr, snapshot)) {
+        g_last_snapshot = snapshot;
+        g_has_last_snapshot = true;
+        LogSnapshot(L"load-montage", this_ptr, snapshot);
+        LogDecodedProjects(snapshot);
+    }
+
+    reentrant = false;
+    return ret_code;
+}
+
 void InstallHookNoThrow() {
     ever::hooking::PatternScanner scanner;
     scanner.Initialize();
 
-    const char* const* candidates =
-        ever::hooking::GetGameFunctionPatternCandidates(ever::hooking::GameFunctionPatternId::ReplayEnumerateProjects);
-    if (candidates == nullptr) {
-        ever::platform::LogDebug(L"[EVER2] Replay project logger: no pattern candidates registered.");
-        return;
-    }
-
-    uint64_t hit_address = 0;
     int matched_candidate = -1;
-
-    for (int i = 0; candidates[i] != nullptr; ++i) {
-        uint64_t candidate_hit = 0;
-        {
-            const std::wstring message =
-                L"[EVER2] Replay project logger: scanning candidate index=" + std::to_wstring(i) +
-                L" (exact).";
-            ever::platform::LogDebug(message.c_str());
-        }
-
-        scanner.AddPattern("ReplayEnumerateProjectsCandidate", candidates[i], &candidate_hit);
-        scanner.PerformScan();
-
-        if (candidate_hit != 0) {
-            hit_address = candidate_hit;
-            matched_candidate = i;
-            break;
-        }
-    }
-
-    if (hit_address == 0) {
-        const std::wstring message =
-            L"[EVER2] Replay project logger: none of the confirmed patterns matched. attempts=" +
-            std::to_wstring(g_install_attempt_count.load(std::memory_order_relaxed));
-        ever::platform::LogDebug(message.c_str());
-        return;
-    }
-
-    const uint64_t module_base = scanner.GetModuleBase();
-    const uint64_t module_size = scanner.GetModuleSize();
-    const uint64_t function_start = ResolveFunctionStartFromUnwind(hit_address, module_base, module_size);
-
+    const uint64_t function_start = ResolvePatternToFunctionStart(
+        scanner,
+        ever::hooking::GameFunctionPatternId::ReplayEnumerateProjects,
+        L"[EVER2] Replay project logger",
+        &matched_candidate);
     if (function_start == 0) {
-        const std::wstring message =
-            L"[EVER2] Replay project logger: pattern matched at " + std::to_wstring(hit_address) +
-            L" but function start could not be resolved through unwind metadata.";
-        ever::platform::LogDebug(message.c_str());
         return;
     }
 
     HRESULT hr = ever::hooking::HookX64Function(
         function_start,
         reinterpret_cast<void*>(&HookedEnumerate),
-        &g_original,
-        g_detour);
-    if (FAILED(hr) || g_detour == nullptr || g_original == nullptr) {
+        &g_enumerate_original,
+        g_enumerate_detour);
+    if (FAILED(hr) || g_enumerate_detour == nullptr || g_enumerate_original == nullptr) {
         const std::wstring message =
             L"[EVER2] Replay project logger: failed to install detour. hr=" + std::to_wstring(static_cast<long>(hr));
         ever::platform::LogDebug(message.c_str());
@@ -439,7 +886,39 @@ void InstallHookNoThrow() {
 
     const std::wstring message =
         L"[EVER2] Replay project logger hook installed. candidateIndex=" + std::to_wstring(matched_candidate) +
-        L" match=" + std::to_wstring(hit_address) +
+        L" functionStart=" + std::to_wstring(function_start);
+    ever::platform::LogDebug(message.c_str());
+}
+
+void InstallLoadMontageHookNoThrow() {
+    ever::hooking::PatternScanner scanner;
+    scanner.Initialize();
+
+    int matched_candidate = -1;
+    const uint64_t function_start = ResolvePatternToFunctionStart(
+        scanner,
+        ever::hooking::GameFunctionPatternId::ReplayLoadMontage,
+        L"[EVER2] Replay load montage logger",
+        &matched_candidate);
+    if (function_start == 0) {
+        return;
+    }
+
+    HRESULT hr = ever::hooking::HookX64Function(
+        function_start,
+        reinterpret_cast<void*>(&HookedLoadMontage),
+        &g_load_montage_original,
+        g_load_montage_detour);
+    if (FAILED(hr) || g_load_montage_detour == nullptr || g_load_montage_original == nullptr) {
+        const std::wstring message =
+            L"[EVER2] Replay load montage logger: failed to install detour. hr=" +
+            std::to_wstring(static_cast<long>(hr));
+        ever::platform::LogDebug(message.c_str());
+        return;
+    }
+
+    const std::wstring message =
+        L"[EVER2] Replay load montage hook installed. candidateIndex=" + std::to_wstring(matched_candidate) +
         L" functionStart=" + std::to_wstring(function_start);
     ever::platform::LogDebug(message.c_str());
 }
@@ -447,7 +926,7 @@ void InstallHookNoThrow() {
 }
 
 void EnsureHookInstalled() {
-    if (g_detour != nullptr) {
+    if (g_enumerate_detour != nullptr && g_load_montage_detour != nullptr) {
         return;
     }
 
@@ -458,7 +937,7 @@ void EnsureHookInstalled() {
     }
 
     std::lock_guard<std::mutex> lock(g_install_mutex);
-    if (g_detour != nullptr) {
+    if (g_enumerate_detour != nullptr && g_load_montage_detour != nullptr) {
         return;
     }
 
@@ -474,13 +953,18 @@ void EnsureHookInstalled() {
         L"[EVER2] Replay project logger: install attempt=" + std::to_wstring(attempt);
     ever::platform::LogDebug(attempt_message.c_str());
 
-    InstallHookNoThrow();
+    if (g_enumerate_detour == nullptr) {
+        InstallHookNoThrow();
+    }
+    if (g_load_montage_detour == nullptr) {
+        InstallLoadMontageHookNoThrow();
+    }
 }
 
 void LogSnapshotForUiTrigger() {
     EnsureHookInstalled();
 
-    if (g_detour == nullptr) {
+    if (g_enumerate_detour == nullptr) {
         const std::wstring message =
             L"[EVER2] Load project UI trigger: replay enumeration hook is not installed (pattern mismatch or install failure). attempts=" +
             std::to_wstring(g_install_attempt_count.load(std::memory_order_relaxed));
@@ -492,6 +976,7 @@ void LogSnapshotForUiTrigger() {
         const std::wstring message =
             L"[EVER2] Load project UI trigger: hook is installed but no enumerate snapshot captured yet. hookHits=" +
             std::to_wstring(g_hook_hits.load(std::memory_order_relaxed)) +
+            L" loadMontageHits=" + std::to_wstring(g_load_montage_hook_hits.load(std::memory_order_relaxed)) +
             L". Open the in-game load flow once to populate it.";
         ever::platform::LogDebug(message.c_str());
         return;
@@ -499,6 +984,27 @@ void LogSnapshotForUiTrigger() {
 
     LogSnapshot(L"ui-trigger latest", nullptr, g_last_snapshot);
     LogDecodedProjects(g_last_snapshot);
+}
+
+bool TryBuildProjectsJsonForUiTrigger(std::string& out_json, std::wstring& out_error) {
+    out_json.clear();
+    out_error.clear();
+
+    EnsureHookInstalled();
+
+    if (g_enumerate_detour == nullptr) {
+        out_error =
+            L"Replay enumeration hook is not installed yet. Open Rockstar Editor load flow first and retry.";
+        return false;
+    }
+
+    if (!g_has_last_snapshot) {
+        out_error =
+            L"Replay snapshot is not ready yet. Open Rockstar Editor load flow once, then click Load project again.";
+        return false;
+    }
+
+    return BuildProjectsJsonFromSnapshot(g_last_snapshot, out_json, out_error);
 }
 
 }

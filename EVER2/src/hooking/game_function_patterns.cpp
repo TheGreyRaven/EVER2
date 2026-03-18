@@ -24,6 +24,11 @@ const char* const kReplayEnumerateProjectPatterns[] = {
     nullptr,
 };
 
+const char* const kReplayLoadMontagePatterns[] = {
+    "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 30 48 8B CA 49 8B F0",
+    nullptr,
+};
+
 }
 
 const char* const* GetGameFunctionPatternCandidates(GameFunctionPatternId id) {
@@ -34,6 +39,8 @@ const char* const* GetGameFunctionPatternCandidates(GameFunctionPatternId id) {
         return kVideoEditorClosePatterns;
     case GameFunctionPatternId::ReplayEnumerateProjects:
         return kReplayEnumerateProjectPatterns;
+    case GameFunctionPatternId::ReplayLoadMontage:
+        return kReplayLoadMontagePatterns;
     default:
         return nullptr;
     }
@@ -47,6 +54,8 @@ const char* GetGameFunctionPatternName(GameFunctionPatternId id) {
         return "CVideoEditorUi::Close";
     case GameFunctionPatternId::ReplayEnumerateProjects:
         return "fiDeviceReplay::Enumerate";
+    case GameFunctionPatternId::ReplayLoadMontage:
+        return "fiDeviceReplay::LoadMontage";
     default:
         return "UnknownPattern";
     }

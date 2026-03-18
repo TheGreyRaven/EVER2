@@ -1,3 +1,5 @@
+import { useNavigate } from "react-router-dom"
+
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { MenuItemConfig } from "./types"
@@ -11,11 +13,17 @@ export const MenuItem = ({ item }: MenuItemProps) => {
   const isDanger = item.variant === "danger"
   const isExit = item.variant === "exit"
   const isDefault = !isDanger && !isExit
+  const navigate = useNavigate()
+
+  const handleClick = () => {
+    item.onClick?.()
+    if (item.route) navigate(item.route)
+  }
 
   return (
     <Button
       variant="ghost"
-      onClick={item.onClick}
+      onClick={handleClick}
       className={cn(
         "group relative h-auto w-full justify-start gap-4 overflow-hidden rounded-none px-5 py-4 text-left",
         "transition-colors duration-150",

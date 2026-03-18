@@ -213,6 +213,10 @@ bool InitializeCefInProcess() {
         Log(L"[EVER2] WARNING: ever2-ui scheme handler registration failed; module-relative UI URLs may not load.");
     }
 
+    if (!RegisterNativeOverlayAssetSchemeHandler()) {
+        Log(L"[EVER2] WARNING: ever2-asset scheme handler registration failed; local image preview URLs may not load.");
+    }
+
     g_cef_client = CreateNativeOverlayClient();
 
     CefWindowInfo window_info;

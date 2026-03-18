@@ -6,6 +6,7 @@ enum class GameFunctionPatternId {
     StartShutdownTasks,
     VideoEditorClose,
     ReplayEnumerateProjects,
+    ReplayLoadMontage,
 };
 
 // Returns a null-terminated array of candidate pattern strings for a target id

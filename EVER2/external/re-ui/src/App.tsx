@@ -1,8 +1,13 @@
-import { RockstarEditor } from "@/components/rockstar-editor"
-import { useViewportScale } from "@/hooks/use-viewport-scale"
+import { MemoryRouter, Route, Routes } from "react-router-dom"
 
-const App = () => {
+import { RockstarEditor } from "@/components/rockstar-editor"
+import { useCefEvents } from "@/hooks/use-cef-events"
+import { useViewportScale } from "@/hooks/use-viewport-scale"
+import { ProjectEditorPage } from "@/pages/project-editor"
+
+const AppInner = () => {
   const scale = useViewportScale()
+  useCefEvents()
 
   return (
     //  bg-[#07090d] (set to transparent while testing)
@@ -16,15 +21,31 @@ const App = () => {
       </div>
 
       <div
-        className="relative z-10 w-240"
+        className="relative z-10"
         style={{ transform: `scale(${scale})`, transformOrigin: "center center" }}
       >
-        <RockstarEditor />
+        <Routes>
+          <Route
+            path="/"
+            element={
+              <div className="w-240">
+                <RockstarEditor />
+              </div>
+            }
+          />
+          <Route path="/project" element={<ProjectEditorPage />} />
+        </Routes>
       </div>
 
     </div>
   )
 }
+
+const App = () => (
+  <MemoryRouter>
+    <AppInner />
+  </MemoryRouter>
+)
 
 export default App
 

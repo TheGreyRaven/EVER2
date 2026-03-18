@@ -124,6 +124,7 @@ void LogPathState(const std::filesystem::path& path, const wchar_t* label);
 CefRefPtr<CefApp> CreateNativeOverlayCefApp();
 CefRefPtr<CefClient> CreateNativeOverlayClient();
 bool RegisterNativeOverlayUiSchemeHandler(const std::filesystem::path& ui_root);
+bool RegisterNativeOverlayAssetSchemeHandler();
 #endif
 
 extern ComPtr<IDXGISwapChain> g_swap_chain;

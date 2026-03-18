@@ -9,7 +9,9 @@ import {
   X,
 } from "lucide-react"
 
+import { useProjectStore } from "@/store/project-store"
 import type { MenuItemConfig } from "./types"
+import type { ReplayProjectsPayload } from "./types"
 
 declare global {
   interface Window {
@@ -17,9 +19,13 @@ declare global {
   }
 }
 
-const sendEditorCommand = (
+export const sendEditorCommand = (
   action: "quit_game" | "exit_rockstar_editor" | "load_project"
 ) => {
+  if (action === "load_project") {
+    useProjectStore.getState().setLoading(true)
+  }
+
   const payload = JSON.stringify({
     action,
     requestId: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -42,6 +48,45 @@ const sendEditorCommand = (
   }
 }
 
+const isReplayProjectsPayload = (
+  value: unknown
+): value is ReplayProjectsPayload => {
+  if (!value || typeof value !== "object") {
+    return false
+  }
+
+  const payload = value as Partial<ReplayProjectsPayload>
+  return (
+    payload.event === "ever2_load_project_data" &&
+    payload.status === "ready" &&
+    typeof payload.projectCount === "number" &&
+    Array.isArray(payload.projects)
+  )
+}
+
+export const parseReplayProjectsPayload = (
+  raw: unknown
+): ReplayProjectsPayload | null => {
+  if (raw == null) {
+    return null
+  }
+
+  let parsed: unknown = raw
+  if (typeof parsed === "string") {
+    try {
+      parsed = JSON.parse(parsed)
+    } catch {
+      return null
+    }
+  }
+
+  if (!isReplayProjectsPayload(parsed)) {
+    return null
+  }
+
+  return parsed
+}
+
 export const primaryItems: MenuItemConfig[] = [
   {
     icon: FilePlus2,
@@ -54,6 +99,7 @@ export const primaryItems: MenuItemConfig[] = [
     label: "Load project",
     description:
       "Open an existing saved project and continue editing where you left off.",
+    route: "/project",
     onClick: () => sendEditorCommand("load_project"),
   },
   {
