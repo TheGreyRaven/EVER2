@@ -103,6 +103,9 @@ std::mutex g_cef_message_queue_mutex;
 std::vector<std::string> g_cef_message_queue;
 std::atomic<uint64_t> g_cef_message_received{0};
 std::atomic<uint64_t> g_cef_message_dropped{0};
+std::atomic<ULONGLONG> g_fivem_deferred_dxgi_bootstrap_tick{0};
+std::atomic<bool> g_fivem_deferred_dxgi_wait_logged{false};
+std::atomic<bool> g_fivem_deferred_dxgi_attempt_logged{false};
 
 void QueueCefMessageFromJs(const std::string& message) {
     constexpr size_t kMaxQueuedMessages = 256;
@@ -537,15 +540,23 @@ bool InitializeNativeOverlayRenderer() {
         return false;
     }
 
-    EnsureDxgiHookInstalled();
+    const bool is_fivem_host = ::ever::platform::IsFiveMHostProcess();
+    if (!is_fivem_host) {
+        EnsureDxgiHookInstalled();
+    } else {
+        constexpr ULONGLONG kFiveMDeferredDxgiBootstrapDelayMs = 25000;
+        const ULONGLONG bootstrap_tick = GetTickCount64() + kFiveMDeferredDxgiBootstrapDelayMs;
+        g_fivem_deferred_dxgi_bootstrap_tick.store(bootstrap_tick, std::memory_order_release);
+        g_fivem_deferred_dxgi_wait_logged.store(false, std::memory_order_release);
+        g_fivem_deferred_dxgi_attempt_logged.store(false, std::memory_order_release);
+        const std::wstring message =
+            L"[EVER2] FiveM host mode: deferring internal DXGI hook bootstrap until process stabilizes (delayMs=" +
+            std::to_wstring(kFiveMDeferredDxgiBootstrapDelayMs) + L").";
+        Log(message.c_str());
+    }
 #if defined(_WIN64)
     EnsureConHostEventBridgeInstalled();
 #endif
-    if (::ever::platform::IsFiveMHostProcess() && !g_dxgi_hook_installed.load(std::memory_order_acquire)) {
-        Log(L"[EVER2] Native overlay renderer disabled: internal DXGI Present hook is not available for FiveM.");
-        ShutdownCefInProcess();
-        return false;
-    }
 
     g_initialized.store(true, std::memory_order_release);
 
@@ -563,7 +574,21 @@ void TickNativeOverlayRenderer() {
         return;
     }
 
-    EnsureDxgiHookInstalled();
+    const bool is_fivem_host = ::ever::platform::IsFiveMHostProcess();
+    if (!is_fivem_host) {
+        EnsureDxgiHookInstalled();
+    } else if (!g_dxgi_hook_installed.load(std::memory_order_acquire)) {
+        const ULONGLONG now = GetTickCount64();
+        const ULONGLONG deferred_tick = g_fivem_deferred_dxgi_bootstrap_tick.load(std::memory_order_acquire);
+        if (deferred_tick != 0 && now >= deferred_tick) {
+            if (!g_fivem_deferred_dxgi_attempt_logged.exchange(true, std::memory_order_acq_rel)) {
+                Log(L"[EVER2] FiveM host mode: attempting deferred internal DXGI hook bootstrap.");
+            }
+            EnsureDxgiHookInstalled();
+        } else if (!g_fivem_deferred_dxgi_wait_logged.exchange(true, std::memory_order_acq_rel)) {
+            Log(L"[EVER2] FiveM host mode: waiting before deferred DXGI hook bootstrap.");
+        }
+    }
 #if defined(_WIN64)
     EnsureConHostEventBridgeInstalled();
 #endif
@@ -738,6 +763,9 @@ void ShutdownNativeOverlayRenderer() {
 
     ShutdownCefInProcess();
     ResetD3DResources();
+    g_fivem_deferred_dxgi_bootstrap_tick.store(0, std::memory_order_release);
+    g_fivem_deferred_dxgi_wait_logged.store(false, std::memory_order_release);
+    g_fivem_deferred_dxgi_attempt_logged.store(false, std::memory_order_release);
 
     std::lock_guard<std::mutex> lock(g_frame_mutex);
     g_frame = {};

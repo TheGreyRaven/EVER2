@@ -23,6 +23,7 @@ std::atomic<bool> g_standalone_runtime_running{false};
 HANDLE g_standalone_runtime_thread = nullptr;
 std::atomic<bool> g_console_deferred_started{false};
 ULONGLONG g_monitor_start_tick = 0;
+std::atomic<bool> g_logged_fivem_standalone_delay{false};
 
 class PolyHookLogger final : public PLH::Logger {
 public:
@@ -70,6 +71,23 @@ DWORD WINAPI StandaloneRuntimeThreadProc(LPVOID) {
 
     while (g_standalone_runtime_running.load(std::memory_order_acquire)) {
         const ULONGLONG now = GetTickCount64();
+        const bool is_fivem_host = ever::platform::IsFiveMHostProcess();
+
+        if (is_fivem_host) {
+            const ULONGLONG elapsed_ms = (g_monitor_start_tick == 0) ? 0 : (now - g_monitor_start_tick);
+            constexpr ULONGLONG kFiveMInitDelayMs = 15000;
+            if (elapsed_ms < kFiveMInitDelayMs) {
+                if (!g_logged_fivem_standalone_delay.exchange(true, std::memory_order_acq_rel)) {
+                    const std::wstring message =
+                        L"[EVER2] Standalone runtime delaying native overlay init in FiveM until process age reaches " +
+                        std::to_wstring(kFiveMInitDelayMs) + L"ms (current=" + std::to_wstring(elapsed_ms) + L"ms).";
+                    ever::platform::LogDebug(message.c_str());
+                }
+                Sleep(250);
+                continue;
+            }
+        }
+
         if (!init_ok && (last_init_attempt == 0 || (now - last_init_attempt) >= 5000)) {
             last_init_attempt = now;
             ever::platform::LogDebug(L"[EVER2] Standalone runtime attempting native overlay initialization.");
