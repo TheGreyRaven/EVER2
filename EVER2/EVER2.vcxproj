@@ -37,6 +37,7 @@
     <ClCompile Include="src\core\dllmain.cpp" />
     <ClCompile Include="src\core\plugin.cpp" />
     <ClCompile Include="src\features\commands\command_dispatcher.cpp" />
+    <ClCompile Include="src\features\editor_projects\editor_projects_bridge.cpp" />
     <ClCompile Include="src\features\exit_rockstar_editor\exit_rockstar_editor_action.cpp" />
     <ClCompile Include="src\features\quit_game\quit_game_action.cpp" />
     <ClCompile Include="src\features\replay_project_logger\replay_project_logger.cpp" />
@@ -68,6 +69,7 @@
     <ClInclude Include="include\ever\browser\overlay_manager.h" />
     <ClInclude Include="include\ever\core\plugin.h" />
     <ClInclude Include="include\ever\features\commands\command_dispatcher.h" />
+    <ClInclude Include="include\ever\features\editor_projects\editor_projects_bridge.h" />
     <ClInclude Include="include\ever\features\exit_rockstar_editor\exit_rockstar_editor_action.h" />
     <ClInclude Include="include\ever\features\quit_game\quit_game_action.h" />
     <ClInclude Include="include\ever\features\replay_project_logger\replay_project_logger.h" />

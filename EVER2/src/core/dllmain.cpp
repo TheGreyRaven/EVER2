@@ -68,6 +68,8 @@ DWORD WINAPI StandaloneRuntimeThreadProc(LPVOID) {
 
     bool init_ok = false;
     ULONGLONG last_init_attempt = 0;
+    uint64_t loop_count = 0;
+    ULONGLONG last_loop_health_log = 0;
 
     while (g_standalone_runtime_running.load(std::memory_order_acquire)) {
         const ULONGLONG now = GetTickCount64();
@@ -99,8 +101,27 @@ DWORD WINAPI StandaloneRuntimeThreadProc(LPVOID) {
         }
 
         if (init_ok) {
-            ever::features::commands::PumpQueuedCommands();
             ever::browser::TickNativeOverlayRenderer();
+
+            const ULONGLONG pump_begin = GetTickCount64();
+            ever::features::commands::PumpQueuedCommands();
+            const ULONGLONG pump_elapsed = GetTickCount64() - pump_begin;
+            if (pump_elapsed >= 250) {
+                const std::wstring message =
+                    L"[EVER2] Standalone runtime warning: PumpQueuedCommands took " +
+                    std::to_wstring(pump_elapsed) + L"ms.";
+                ever::platform::LogDebug(message.c_str());
+            }
+
+            ++loop_count;
+            const ULONGLONG loop_now = GetTickCount64();
+            if (last_loop_health_log == 0 || (loop_now - last_loop_health_log) >= 5000) {
+                last_loop_health_log = loop_now;
+                const std::wstring message =
+                    L"[EVER2] Standalone runtime loop health: initOk=1 loopCount=" +
+                    std::to_wstring(loop_count);
+                ever::platform::LogDebug(message.c_str());
+            }
         }
 
         Sleep(16);

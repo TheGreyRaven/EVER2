@@ -29,6 +29,43 @@ const char* const kReplayLoadMontagePatterns[] = {
     nullptr,
 };
 
+const char* const kReplayFileManagerStartEnumerateProjectFilesPatterns[] = {
+    "48 83 EC 28 4C 8B C1 4C 8B CA 48 8D 0D ?? ?? ?? ?? BA 01 00 00 00 E8 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 84 C0 0F 95 C0 48 83 C4 28 C3",
+    nullptr,
+};
+
+// Starts at a nop due to very small function
+const char* const kReplayFileManagerCheckEnumerateProjectFilesPatterns[] = {
+    "90 8B 05 ?? ?? ?? ?? 85 C0 74 0D 83 F8 02 74 03 32 C0 C3 C6 01 00 EB 03 C6 01 01 B0 01 C3",
+    nullptr,
+};
+
+const char* const kReplayMgrInternalStartEnumerateProjectFilesPatterns[] = {
+    "48 8B CA 48 8D 15 ?? ?? ?? ?? E9 ?? ?? ?? ?? 90 48 83 EC 28 8B 05 ?? ?? ?? ?? 83 F8 01",
+    nullptr,
+};
+
+const char* const kReplayMgrInternalCheckEnumerateProjectFilesPatterns[] = {
+    "E9 ?? ?? ?? ?? CC E5 8B E9 ?? ?? ?? ?? CC",
+    "E9 ?? ?? ?? ?? CC 21 BA ?? ?? ?? ?? 00 CC",
+    nullptr,
+};
+
+const char* const kVideoEditorProjectPrepareStagingClipByIndexPatterns[] = {
+    "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 33 DB 8B F2 48 8B F9 48 39 99 20 03 00 00 74 2D E8 ?? ?? ?? ?? 48 8B 8F 20 03 00 00 8B D6 E8 ?? ?? ?? ?? 48 85 C0 74 15 48 8B D0 48 8B CF E8 ?? ?? ?? ?? 48 8B CF E8 ?? ?? ?? ?? B3 01",
+    nullptr,
+};
+
+const char* const kVideoEditorProjectMoveStagingClipToProjectPatterns[] = {
+    "48 89 5C 24 08 57 48 83 EC 20 48 83 B9 20 03",
+    nullptr,
+};
+
+const char* const kVideoEditorProjectSaveProjectPatterns[] = {
+    "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 48 83 B9 20",
+    nullptr,
+};
+
 }
 
 const char* const* GetGameFunctionPatternCandidates(GameFunctionPatternId id) {
@@ -41,6 +78,20 @@ const char* const* GetGameFunctionPatternCandidates(GameFunctionPatternId id) {
         return kReplayEnumerateProjectPatterns;
     case GameFunctionPatternId::ReplayLoadMontage:
         return kReplayLoadMontagePatterns;
+    case GameFunctionPatternId::ReplayFileManagerStartEnumerateProjectFiles:
+        return kReplayFileManagerStartEnumerateProjectFilesPatterns;
+    case GameFunctionPatternId::ReplayFileManagerCheckEnumerateProjectFiles:
+        return kReplayFileManagerCheckEnumerateProjectFilesPatterns;
+    case GameFunctionPatternId::ReplayMgrInternalStartEnumerateProjectFiles:
+        return kReplayMgrInternalStartEnumerateProjectFilesPatterns;
+    case GameFunctionPatternId::ReplayMgrInternalCheckEnumerateProjectFiles:
+        return kReplayMgrInternalCheckEnumerateProjectFilesPatterns;
+    case GameFunctionPatternId::VideoEditorProjectPrepareStagingClipByIndex:
+        return kVideoEditorProjectPrepareStagingClipByIndexPatterns;
+    case GameFunctionPatternId::VideoEditorProjectMoveStagingClipToProject:
+        return kVideoEditorProjectMoveStagingClipToProjectPatterns;
+    case GameFunctionPatternId::VideoEditorProjectSaveProject:
+        return kVideoEditorProjectSaveProjectPatterns;
     default:
         return nullptr;
     }
@@ -56,6 +107,20 @@ const char* GetGameFunctionPatternName(GameFunctionPatternId id) {
         return "fiDeviceReplay::Enumerate";
     case GameFunctionPatternId::ReplayLoadMontage:
         return "fiDeviceReplay::LoadMontage";
+    case GameFunctionPatternId::ReplayFileManagerStartEnumerateProjectFiles:
+        return "ReplayFileManager::StartEnumerateProjectFiles";
+    case GameFunctionPatternId::ReplayFileManagerCheckEnumerateProjectFiles:
+        return "ReplayFileManager::CheckEnumerateProjectFiles";
+    case GameFunctionPatternId::ReplayMgrInternalStartEnumerateProjectFiles:
+        return "CReplayMgrInternal::StartEnumerateProjectFiles";
+    case GameFunctionPatternId::ReplayMgrInternalCheckEnumerateProjectFiles:
+        return "CReplayMgrInternal::CheckEnumerateProjectFiles";
+    case GameFunctionPatternId::VideoEditorProjectPrepareStagingClipByIndex:
+        return "CVideoEditorProject::PrepareStagingClip";
+    case GameFunctionPatternId::VideoEditorProjectMoveStagingClipToProject:
+        return "CVideoEditorProject::MoveStagingClipToProject";
+    case GameFunctionPatternId::VideoEditorProjectSaveProject:
+        return "CVideoEditorProject::SaveProject";
     default:
         return "UnknownPattern";
     }

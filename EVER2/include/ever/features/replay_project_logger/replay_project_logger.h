@@ -7,6 +7,14 @@ namespace ever::features::replay_project_logger {
 // Installs the replay-project enumeration detour once and then becomes a no-op.
 void EnsureHookInstalled();
 
+void PrimeHookInstallationAsync();
+
+// Returns true when the replay enumeration hook is installed.
+bool IsHookInstalled();
+
+// Returns true when at least one replay snapshot is available.
+bool HasSnapshotReady();
+
 // Emits a readable snapshot to the debug log for UI-driven testing.
 void LogSnapshotForUiTrigger();
 

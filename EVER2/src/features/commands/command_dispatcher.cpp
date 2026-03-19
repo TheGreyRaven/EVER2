@@ -1,6 +1,7 @@
 #include "ever/features/commands/command_dispatcher.h"
 
 #include "ever/browser/native_overlay_renderer.h"
+#include "ever/features/editor_projects/editor_projects_bridge.h"
 #include "ever/features/exit_rockstar_editor/exit_rockstar_editor_action.h"
 #include "ever/features/quit_game/quit_game_action.h"
 #include "ever/features/replay_project_logger/replay_project_logger.h"
@@ -136,6 +137,8 @@ void DispatchMessage(const std::string& payload) {
     }
 
     if (action == "load_project") {
+        const ULONGLONG load_begin = GetTickCount64();
+        ever::platform::LogDebug(L"[EVER2] Command 'load_project': ensuring replay project hooks on-demand.");
         ever::features::replay_project_logger::LogSnapshotForUiTrigger();
         std::string projects_payload;
         std::wstring load_error;
@@ -159,7 +162,68 @@ void DispatchMessage(const std::string& payload) {
         if (!projects_event.is_discarded() && projects_event.is_object()) {
             extra["projectCount"] = projects_event.value("projectCount", 0);
         }
+        const ULONGLONG load_elapsed = GetTickCount64() - load_begin;
+        extra["elapsedMs"] = load_elapsed;
+        {
+            const std::wstring message =
+                L"[EVER2] Command 'load_project' completed. elapsedMs=" + std::to_wstring(load_elapsed) +
+                L" hookInstalled=" + std::to_wstring(ever::features::replay_project_logger::IsHookInstalled() ? 1 : 0) +
+                L" snapshotReady=" + std::to_wstring(ever::features::replay_project_logger::HasSnapshotReady() ? 1 : 0);
+            ever::platform::LogDebug(message.c_str());
+        }
         SendCommandResponse(action, request_id, "accepted", "Replay project payload sent to UI.", extra);
+        return;
+    }
+
+    if (action == "add_clip_to_project") {
+        ever::platform::LogDebug(L"[EVER2] Command 'add_clip_to_project': ensuring editor project hooks on-demand.");
+        const Json& data = parsed.data;
+        const int source_index = data.value("sourceClipIndex", -1);
+        const int destination_index = data.value("destinationIndex", -1);
+
+        std::wstring add_error;
+        const bool add_ok = ever::features::editor_projects::AddClipToCurrentProject(
+            source_index,
+            destination_index,
+            add_error);
+        if (!add_ok) {
+            const std::wstring message = L"[EVER2] Command 'add_clip_to_project' failed: " + add_error;
+            ever::platform::LogDebug(message.c_str());
+            SendCommandResponse(action, request_id, "error", WideToUtf8(add_error));
+            return;
+        }
+
+        std::string projects_payload;
+        std::wstring load_error;
+        if (ever::features::replay_project_logger::TryBuildProjectsJsonForUiTrigger(projects_payload, load_error)) {
+            Json projects_event = Json::parse(projects_payload, nullptr, false);
+            if (!projects_event.is_discarded() && projects_event.is_object() && !request_id.empty()) {
+                projects_event["requestId"] = request_id;
+                ever::browser::SendCefMessage(projects_event.dump());
+            } else {
+                ever::browser::SendCefMessage(projects_payload);
+            }
+        }
+
+        Json extra;
+        extra["sourceClipIndex"] = source_index;
+        extra["destinationIndex"] = destination_index;
+        SendCommandResponse(action, request_id, "accepted", "Clip add requested through native project hooks.", extra);
+        return;
+    }
+
+    if (action == "save_project") {
+        ever::platform::LogDebug(L"[EVER2] Command 'save_project': ensuring editor project hooks on-demand.");
+        std::wstring save_error;
+        const bool save_ok = ever::features::editor_projects::SaveCurrentProject(save_error);
+        if (!save_ok) {
+            const std::wstring message = L"[EVER2] Command 'save_project' failed: " + save_error;
+            ever::platform::LogDebug(message.c_str());
+            SendCommandResponse(action, request_id, "error", WideToUtf8(save_error));
+            return;
+        }
+
+        SendCommandResponse(action, request_id, "accepted", "Native SaveProject executed.");
         return;
     }
 
@@ -169,8 +233,6 @@ void DispatchMessage(const std::string& payload) {
 }
 
 void PumpQueuedCommands() {
-    ever::features::replay_project_logger::EnsureHookInstalled();
-
     int processed = 0;
     std::string payload;
 

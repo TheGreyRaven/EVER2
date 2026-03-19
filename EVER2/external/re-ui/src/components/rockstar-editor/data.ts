@@ -12,6 +12,7 @@ import {
 import { useProjectStore } from "@/store/project-store"
 import type { MenuItemConfig } from "./types"
 import type { ReplayProjectsPayload } from "./types"
+import type { EditorCommandAction, EditorCommandResponse } from "./types"
 
 declare global {
   interface Window {
@@ -20,7 +21,8 @@ declare global {
 }
 
 export const sendEditorCommand = (
-  action: "quit_game" | "exit_rockstar_editor" | "load_project"
+  action: EditorCommandAction,
+  data?: Record<string, unknown>
 ) => {
   if (action === "load_project") {
     useProjectStore.getState().setLoading(true)
@@ -29,6 +31,7 @@ export const sendEditorCommand = (
   const payload = JSON.stringify({
     action,
     requestId: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    ...(data ? { data } : {}),
   })
 
   try {
@@ -81,6 +84,44 @@ export const parseReplayProjectsPayload = (
   }
 
   if (!isReplayProjectsPayload(parsed)) {
+    return null
+  }
+
+  return parsed
+}
+
+const isEditorCommandResponse = (
+  value: unknown
+): value is EditorCommandResponse => {
+  if (!value || typeof value !== "object") {
+    return false
+  }
+
+  const payload = value as Partial<EditorCommandResponse>
+  return (
+    payload.event === "ever2_command_response" &&
+    typeof payload.action === "string" &&
+    (payload.status === "accepted" || payload.status === "error")
+  )
+}
+
+export const parseEditorCommandResponse = (
+  raw: unknown
+): EditorCommandResponse | null => {
+  if (raw == null) {
+    return null
+  }
+
+  let parsed: unknown = raw
+  if (typeof parsed === "string") {
+    try {
+      parsed = JSON.parse(parsed)
+    } catch {
+      return null
+    }
+  }
+
+  if (!isEditorCommandResponse(parsed)) {
     return null
   }
 

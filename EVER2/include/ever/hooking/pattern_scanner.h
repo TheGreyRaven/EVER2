@@ -37,6 +37,8 @@ private:
     std::map<std::string, PatternEntry> patterns_;
     HMODULE module_base_ = nullptr;
     uint32_t module_size_ = 0;
+    const uint8_t* scan_base_ = nullptr;
+    uint32_t scan_size_ = 0;
 };
 
 }

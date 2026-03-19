@@ -9,6 +9,7 @@ namespace ever::utils::command_json {
 struct ParsedCommandPayload {
     std::string action;
     std::string request_id;
+    nlohmann::json data;
 };
 
 inline bool ParseCommandPayload(
@@ -26,6 +27,11 @@ inline bool ParseCommandPayload(
 
     out_payload.action = request.value("action", std::string());
     out_payload.request_id = request.value("requestId", std::string());
+    if (request.contains("data") && request["data"].is_object()) {
+        out_payload.data = request["data"];
+    } else {
+        out_payload.data = nlohmann::json::object();
+    }
     return true;
 }
 

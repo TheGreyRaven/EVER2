@@ -7,6 +7,13 @@ enum class GameFunctionPatternId {
     VideoEditorClose,
     ReplayEnumerateProjects,
     ReplayLoadMontage,
+    ReplayFileManagerStartEnumerateProjectFiles,
+    ReplayFileManagerCheckEnumerateProjectFiles,
+    ReplayMgrInternalStartEnumerateProjectFiles,
+    ReplayMgrInternalCheckEnumerateProjectFiles,
+    VideoEditorProjectPrepareStagingClipByIndex,
+    VideoEditorProjectMoveStagingClipToProject,
+    VideoEditorProjectSaveProject,
 };
 
 // Returns a null-terminated array of candidate pattern strings for a target id

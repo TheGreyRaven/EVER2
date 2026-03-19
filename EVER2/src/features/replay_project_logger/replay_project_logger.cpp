@@ -4,7 +4,6 @@
 #include "ever/hooking/pattern_scanner.h"
 #include "ever/hooking/x64_detour.h"
 #include "ever/platform/debug_console.h"
-#include "ever/utils/replay_clip_utils.h"
 
 #include <nlohmann/json.hpp>
 
@@ -42,6 +41,8 @@ constexpr size_t kReplayInfoPathPtrOffset = 0xAF0;
 constexpr size_t kReplayInfoPathLenOffset = 0xAF8;
 constexpr size_t kReplayInfoFilenamePtrOffset = 0xB00;
 constexpr size_t kReplayInfoFilenameLenOffset = 0xB08;
+constexpr int kEnumerateKickPollIterations = 40;
+constexpr DWORD kEnumerateKickPollSleepMs = 10;
 
 struct ReplaySnapshot {
     bool has_enumerated_clips = false;
@@ -67,14 +68,27 @@ using EnumerateFn = uint64_t(__fastcall*)(
     uint64_t a12);
 
 using LoadMontageFn = uint32_t(__fastcall*)(void* this_ptr, void* replay_info, uint64_t* out_extended_result);
+using ReplayFileManagerStartEnumerateProjectFilesFn = bool(__fastcall*)(void* file_list, const char* filter);
+using ReplayFileManagerCheckEnumerateProjectFilesFn = bool(__fastcall*)(bool* result);
 
 std::shared_ptr<PLH::x64Detour> g_enumerate_detour;
 EnumerateFn g_enumerate_original = nullptr;
 std::shared_ptr<PLH::x64Detour> g_load_montage_detour;
 LoadMontageFn g_load_montage_original = nullptr;
+std::shared_ptr<PLH::x64Detour> g_replay_file_manager_start_enum_projects_detour;
+ReplayFileManagerStartEnumerateProjectFilesFn g_replay_file_manager_start_enum_projects_original = nullptr;
+std::shared_ptr<PLH::x64Detour> g_replay_file_manager_check_enum_projects_detour;
+ReplayFileManagerCheckEnumerateProjectFilesFn g_replay_file_manager_check_enum_projects_original = nullptr;
 std::mutex g_install_mutex;
 std::atomic<uint64_t> g_hook_hits{0};
 std::atomic<uint64_t> g_load_montage_hook_hits{0};
+std::atomic<uint64_t> g_start_enum_projects_hook_hits{0};
+std::atomic<uint64_t> g_check_enum_projects_hook_hits{0};
+std::atomic<bool> g_last_enumerate_projects_completed{false};
+std::atomic<bool> g_last_enumerate_projects_result{false};
+std::atomic<uintptr_t> g_last_enum_projects_file_list_ptr{0};
+std::atomic<bool> g_enumerate_session_active{false};
+std::atomic<int> g_last_check_logged_state{-1};
 std::atomic<uint32_t> g_install_attempt_count{0};
 std::atomic<ULONGLONG> g_last_install_attempt_tick{0};
 ReplaySnapshot g_last_snapshot{};
@@ -110,6 +124,10 @@ bool IsReadableAddressRange(const void* address, size_t size) {
     const auto region_start = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
     const auto region_end = region_start + mbi.RegionSize;
     return start >= region_start && end <= region_end;
+}
+
+bool IsLikelyPrintableAscii(char c) {
+    return c >= 32 && c <= 126;
 }
 
 template <typename T>
@@ -255,6 +273,126 @@ uint64_t ResolvePatternToFunctionStart(
     return function_start;
 }
 
+uint64_t ResolvePatternToAddress(
+    ever::hooking::PatternScanner& scanner,
+    ever::hooking::GameFunctionPatternId pattern_id,
+    const wchar_t* log_prefix,
+    int* out_candidate_index,
+    int max_candidates = -1) {
+    const char* const* candidates = ever::hooking::GetGameFunctionPatternCandidates(pattern_id);
+    if (candidates == nullptr) {
+        const std::wstring message = std::wstring(log_prefix) + L": no pattern candidates registered.";
+        ever::platform::LogDebug(message.c_str());
+        return 0;
+    }
+
+    uint64_t hit_address = 0;
+    int matched_candidate = -1;
+    for (int i = 0; candidates[i] != nullptr; ++i) {
+        if (max_candidates > 0 && i >= max_candidates) {
+            break;
+        }
+
+        uint64_t candidate_hit = 0;
+        const std::wstring message =
+            std::wstring(log_prefix) + L": scanning candidate index=" + std::to_wstring(i) + L" (exact address).";
+        ever::platform::LogDebug(message.c_str());
+
+        const std::string pattern_key = "ReplayProjectLoggerAddressCandidate_" + std::to_string(i);
+        scanner.AddPattern(pattern_key, candidates[i], &candidate_hit);
+        scanner.PerformScan();
+        if (candidate_hit != 0) {
+            hit_address = candidate_hit;
+            matched_candidate = i;
+            break;
+        }
+    }
+
+    if (out_candidate_index != nullptr) {
+        *out_candidate_index = matched_candidate;
+    }
+
+    if (hit_address == 0) {
+        const std::wstring message =
+            std::wstring(log_prefix) + L": none of the patterns matched. attempts=" +
+            std::to_wstring(g_install_attempt_count.load(std::memory_order_relaxed));
+        ever::platform::LogDebug(message.c_str());
+        return 0;
+    }
+
+    const std::wstring message =
+        std::wstring(log_prefix) + L": resolved candidateIndex=" + std::to_wstring(matched_candidate) +
+        L" match=" + std::to_wstring(hit_address) +
+        L" functionStart=" + std::to_wstring(hit_address) +
+        L" (direct-match)";
+    ever::platform::LogDebug(message.c_str());
+    return hit_address;
+}
+
+uint64_t ResolveCheckEnumerateHookAddress(uint64_t matched_address) {
+    if (matched_address == 0) {
+        return 0;
+    }
+
+    const auto* bytes = reinterpret_cast<const uint8_t*>(matched_address);
+    if (!IsReadableAddressRange(bytes, 3)) {
+        return matched_address;
+    }
+
+    if (bytes[0] == 0x90 && bytes[1] == 0x8B && bytes[2] == 0x05) {
+        return matched_address + 1;
+    }
+
+    return matched_address;
+}
+
+void BeginEnumerateSession() {
+    g_last_enumerate_projects_completed.store(false, std::memory_order_release);
+    g_last_enumerate_projects_result.store(false, std::memory_order_release);
+    g_last_check_logged_state.store(-1, std::memory_order_release);
+    g_enumerate_session_active.store(true, std::memory_order_release);
+}
+
+void EndEnumerateSession() {
+    g_enumerate_session_active.store(false, std::memory_order_release);
+}
+
+bool AreCoreHooksInstalled() {
+    return g_enumerate_detour != nullptr &&
+           g_load_montage_detour != nullptr &&
+           g_replay_file_manager_start_enum_projects_detour != nullptr &&
+           g_replay_file_manager_check_enum_projects_detour != nullptr;
+}
+
+template <typename OriginalFn>
+bool InstallDetourForResolvedAddress(
+    uint64_t function_start,
+    void* detour_handler,
+    OriginalFn* out_original,
+    std::shared_ptr<PLH::x64Detour>& out_detour,
+    const wchar_t* failure_message_prefix) {
+    const HRESULT hr = ever::hooking::HookX64Function(
+        function_start,
+        detour_handler,
+        out_original,
+        out_detour);
+    if (FAILED(hr) || out_detour == nullptr || *out_original == nullptr) {
+        const std::wstring message =
+            std::wstring(failure_message_prefix) + std::to_wstring(static_cast<long>(hr));
+        ever::platform::LogDebug(message.c_str());
+        return false;
+    }
+    return true;
+}
+
+bool EnsureEnumerateHookInstalledForUi() {
+    PrimeHookInstallationAsync();
+    if (g_enumerate_detour == nullptr) {
+        EnsureHookInstalled();
+    }
+    return g_enumerate_detour != nullptr;
+}
+
 std::string ReadAsciiCStringAt(const char* address, size_t max_len) {
     if (!IsReadableAddressRange(address, 1) || max_len == 0) {
         return std::string();
@@ -270,7 +408,7 @@ std::string ReadAsciiCStringAt(const char* address, size_t max_len) {
         if (c == '\0') {
             break;
         }
-        if (!ever::utils::replay_clip::IsLikelyPrintable(c)) {
+        if (!IsLikelyPrintableAscii(c)) {
             break;
         }
         out.push_back(c);
@@ -408,7 +546,7 @@ std::string GuessPathFromProjectEntry(const uint8_t* entry_base) {
     for (size_t i = 0; i + 8 < kProjectEntrySize; ++i) {
         const char* candidate = reinterpret_cast<const char*>(entry_base + i);
         size_t len = 0;
-        while ((i + len) < kProjectEntrySize && candidate[len] != '\0' && ever::utils::replay_clip::IsLikelyPrintable(candidate[len])) {
+        while ((i + len) < kProjectEntrySize && candidate[len] != '\0' && IsLikelyPrintableAscii(candidate[len])) {
             ++len;
         }
 
@@ -491,19 +629,6 @@ void LogDecodedProjects(const ReplaySnapshot& snapshot) {
         const std::string project_name = GetFilenameNoExtension(path_guess);
         const std::wstring project_name_w = project_name.empty() ? L"<unknown>" : ToWide(project_name);
         const std::wstring last_write_local = FormatLastWriteTimestamp(last_write);
-        std::string preview_candidate = ever::utils::replay_clip::GuessPreviewFromProjectClipNames(path_guess);
-        std::string preview_source = "project-clip-string";
-        if (preview_candidate.empty()) {
-            preview_candidate = ever::utils::replay_clip::GuessPreviewPath(path_guess);
-            preview_source = "heuristic";
-        }
-        const std::vector<std::string> project_clip_names =
-            ever::utils::replay_clip::ExtractProjectClipBaseNames(path_guess);
-
-        const std::wstring preview_candidate_w = preview_candidate.empty() ? L"<pending-project-clip-string>" : ToWide(preview_candidate);
-        const std::string preview_disk_path = ever::utils::replay_clip::ReplayUriToDiskPath(preview_candidate);
-        const bool preview_exists = !preview_candidate.empty() && ever::utils::replay_clip::FileExists(preview_disk_path);
-
         std::wstring message =
             L"[EVER2] Replay project[" + std::to_wstring(i) +
             L"] projectName=" + project_name_w +
@@ -516,34 +641,9 @@ void LogDecodedProjects(const ReplaySnapshot& snapshot) {
             L" lastWriteLocal=" + last_write_local +
             L" markDelete=" + std::to_wstring(mark_delete != 0 ? 1 : 0) +
             L" path=" + path_w +
-            L" previewCandidate=" + preview_candidate_w +
-            L" previewDiskPath=" + ToWide(preview_disk_path) +
-            L" previewExists=" + std::to_wstring(preview_exists ? 1 : 0) +
-            L" previewSource=" + ToWide(preview_source) +
             L" clipArrayPtr=" + std::to_wstring(clip_array_ptr) +
             L" clipCount16=" + std::to_wstring(clip_count16) +
-            L" clipCap16=" + std::to_wstring(clip_capacity16) +
-            L" projectClipNameCount=" + std::to_wstring(project_clip_names.size());
-
-        if (!project_clip_names.empty()) {
-            std::wstringstream clip_file_stream;
-            const size_t clip_file_dump_count = std::min<size_t>(project_clip_names.size(), 12);
-            for (size_t clip_idx = 0; clip_idx < clip_file_dump_count; ++clip_idx) {
-                if (clip_idx > 0) {
-                    clip_file_stream << L",";
-                }
-
-                const std::string clip_replay_path = ever::utils::replay_clip::BuildClipReplayPath(project_clip_names[clip_idx]);
-                const bool clip_exists = ever::utils::replay_clip::FileExists(
-                    ever::utils::replay_clip::ReplayUriToDiskPath(clip_replay_path));
-                clip_file_stream << ToWide(clip_replay_path) << L"(" << (clip_exists ? 1 : 0) << L")";
-            }
-
-            message += L" clipFiles=" + clip_file_stream.str();
-            if (project_clip_names.size() > clip_file_dump_count) {
-                message += L" clipFilesTruncated=" + std::to_wstring(project_clip_names.size() - clip_file_dump_count);
-            }
-        }
+            L" clipCap16=" + std::to_wstring(clip_capacity16);
 
         std::vector<uint32_t> clip_uids;
 
@@ -564,20 +664,6 @@ void LogDecodedProjects(const ReplaySnapshot& snapshot) {
                 }
                 message += L" clipUIDs=" + uid_stream.str();
             }
-        }
-
-        if (!clip_uids.empty() && !project_clip_names.empty()) {
-            std::wstringstream uid_path_stream;
-            const size_t pair_count = std::min<size_t>(clip_uids.size(), project_clip_names.size());
-            for (size_t pair_idx = 0; pair_idx < pair_count; ++pair_idx) {
-                if (pair_idx > 0) {
-                    uid_path_stream << L",";
-                }
-
-                const std::string clip_replay_path = ever::utils::replay_clip::BuildClipReplayPath(project_clip_names[pair_idx]);
-                uid_path_stream << clip_uids[pair_idx] << L"->" << ToWide(clip_replay_path);
-            }
-            message += L" uidToClipPath=" + uid_path_stream.str();
         }
 
         ever::platform::LogDebug(message.c_str());
@@ -644,14 +730,6 @@ bool BuildProjectsJsonFromSnapshot(const ReplaySnapshot& snapshot, std::string& 
         const std::string project_name = GetFilenameNoExtension(path_guess);
         const std::wstring last_write_local_w = FormatLastWriteTimestamp(last_write);
         const std::string last_write_local = WideToUtf8(last_write_local_w);
-        std::string preview_candidate = ever::utils::replay_clip::GuessPreviewFromProjectClipNames(path_guess);
-        if (preview_candidate.empty()) {
-            preview_candidate = ever::utils::replay_clip::GuessPreviewPath(path_guess);
-        }
-
-        const std::vector<std::string> project_clip_names =
-            ever::utils::replay_clip::ExtractProjectClipBaseNames(path_guess);
-
         std::vector<uint32_t> clip_uids;
         if (clip_array_ptr != 0 && clip_count16 > 0 && clip_count16 < 256) {
             const auto* clip_base = reinterpret_cast<const uint8_t*>(clip_array_ptr);
@@ -678,40 +756,27 @@ bool BuildProjectsJsonFromSnapshot(const ReplaySnapshot& snapshot, std::string& 
         project["lastWriteRaw"] = last_write;
         project["lastWriteLocal"] = last_write_local;
         project["markDelete"] = (mark_delete != 0);
-        project["previewCandidate"] = preview_candidate;
-        project["previewDiskPath"] = ever::utils::replay_clip::ReplayUriToDiskPath(preview_candidate);
-        project["previewExists"] =
-            !preview_candidate.empty() &&
-            ever::utils::replay_clip::FileExists(ever::utils::replay_clip::ReplayUriToDiskPath(preview_candidate));
+        project["previewCandidate"] = "";
+        project["previewDiskPath"] = "";
+        project["previewExists"] = false;
         project["clipArrayPtr"] = clip_array_ptr;
         project["clipCount16"] = clip_count16;
         project["clipCap16"] = clip_capacity16;
-        project["clipBaseNameCount"] = project_clip_names.size();
+        project["clipBaseNameCount"] = 0;
 
         Json clips = Json::array();
-        const size_t max_clip_rows = std::max(project_clip_names.size(), clip_uids.size());
+        const size_t max_clip_rows = clip_uids.size();
         for (size_t clip_index = 0; clip_index < max_clip_rows; ++clip_index) {
             Json clip;
             clip["index"] = clip_index;
 
-            if (clip_index < project_clip_names.size()) {
-                const std::string& base_name = project_clip_names[clip_index];
-                const std::string clip_path = ever::utils::replay_clip::BuildClipReplayPath(base_name);
-                clip["baseName"] = base_name;
-                clip["path"] = clip_path;
-                clip["diskPath"] = ever::utils::replay_clip::ReplayUriToDiskPath(clip_path);
-                clip["exists"] = ever::utils::replay_clip::FileExists(
-                    ever::utils::replay_clip::ReplayUriToDiskPath(clip_path));
-                // Clip thumbnail: same base name with .jpg extension
-                const std::string clip_preview_replay_path =
-                    std::string("replay:/videos/clips/") + base_name + ".jpg";
-                const std::string clip_preview_disk_path =
-                    ever::utils::replay_clip::ReplayUriToDiskPath(clip_preview_replay_path);
-                clip["previewPath"] = clip_preview_replay_path;
-                clip["previewDiskPath"] = clip_preview_disk_path;
-                clip["previewExists"] =
-                    ever::utils::replay_clip::FileExists(clip_preview_disk_path);
-            }
+            clip["baseName"] = "";
+            clip["path"] = "";
+            clip["diskPath"] = "";
+            clip["exists"] = false;
+            clip["previewPath"] = "";
+            clip["previewDiskPath"] = "";
+            clip["previewExists"] = false;
 
             if (clip_index < clip_uids.size()) {
                 clip["uid"] = clip_uids[clip_index];
@@ -817,14 +882,6 @@ uint32_t __fastcall HookedLoadMontage(void* this_ptr, void* replay_info, uint64_
     const std::string file_path = ReadReplayInfoString(info_base, kReplayInfoPathPtrOffset, kReplayInfoPathLenOffset);
     const std::string filename = ReadReplayInfoString(info_base, kReplayInfoFilenamePtrOffset, kReplayInfoFilenameLenOffset);
     const std::string project_name = !filename.empty() ? GetFilenameNoExtension(filename) : GetFilenameNoExtension(file_path);
-    const std::string best_path_seed = !file_path.empty() ? file_path : filename;
-    std::string preview_candidate = ever::utils::replay_clip::GuessPreviewFromProjectClipNames(best_path_seed);
-    if (preview_candidate.empty()) {
-        preview_candidate = ever::utils::replay_clip::GuessPreviewPath(best_path_seed);
-    }
-    const bool preview_exists = ever::utils::replay_clip::FileExists(
-        ever::utils::replay_clip::ReplayUriToDiskPath(preview_candidate));
-
     const uint32_t ret_code = g_load_montage_original(this_ptr, replay_info, out_extended_result);
     uint64_t extended_result = 0;
     if (out_extended_result != nullptr && IsReadableAddressRange(out_extended_result, sizeof(uint64_t))) {
@@ -840,8 +897,6 @@ uint32_t __fastcall HookedLoadMontage(void* this_ptr, void* replay_info, uint64_
         L" retCode=" + std::to_wstring(ret_code) +
         L" extendedResult=" + std::to_wstring(extended_result) +
         L" projectName=" + ToWide(project_name) +
-        L" previewCandidate=" + ToWide(preview_candidate) +
-        L" previewExists=" + std::to_wstring(preview_exists ? 1 : 0) +
         L" path=" + std::wstring(file_path.begin(), file_path.end()) +
         L" filename=" + std::wstring(filename.begin(), filename.end());
     ever::platform::LogDebug(message.c_str());
@@ -858,6 +913,113 @@ uint32_t __fastcall HookedLoadMontage(void* this_ptr, void* replay_info, uint64_
     return ret_code;
 }
 
+bool __fastcall HookedReplayFileManagerStartEnumerateProjectFiles(void* file_list, const char* filter) {
+    if (g_replay_file_manager_start_enum_projects_original == nullptr) {
+        return false;
+    }
+
+    const bool ok = g_replay_file_manager_start_enum_projects_original(file_list, filter);
+    g_last_enum_projects_file_list_ptr.store(reinterpret_cast<uintptr_t>(file_list), std::memory_order_release);
+    g_last_enumerate_projects_completed.store(false, std::memory_order_release);
+    const std::string filter_text = (filter != nullptr) ? filter : "";
+
+    const uint64_t hit_count = g_start_enum_projects_hook_hits.fetch_add(1, std::memory_order_relaxed) + 1;
+    const std::wstring message =
+        L"[EVER2] ReplayFileManager::StartEnumerateProjectFiles hook: hits=" + std::to_wstring(hit_count) +
+        L" fileList=" + std::to_wstring(reinterpret_cast<uintptr_t>(file_list)) +
+        L" filter='" + ToWide(filter_text) + L"'" +
+        L" returned=" + std::to_wstring(ok ? 1 : 0);
+    ever::platform::LogDebug(message.c_str());
+    return ok;
+}
+
+bool __fastcall HookedReplayFileManagerCheckEnumerateProjectFiles(bool* result) {
+    if (g_replay_file_manager_check_enum_projects_original == nullptr) {
+        return false;
+    }
+
+    const bool completed = g_replay_file_manager_check_enum_projects_original(result);
+    const bool op_result = (result != nullptr) ? (*result) : false;
+
+    const uint64_t hit_count = g_check_enum_projects_hook_hits.fetch_add(1, std::memory_order_relaxed) + 1;
+    const bool session_active = g_enumerate_session_active.load(std::memory_order_acquire);
+    if (session_active && completed) {
+        g_last_enumerate_projects_completed.store(true, std::memory_order_release);
+        g_last_enumerate_projects_result.store(op_result, std::memory_order_release);
+    }
+
+    const int state = (completed ? 2 : 0) | (op_result ? 1 : 0);
+    const int previous_state = g_last_check_logged_state.exchange(state, std::memory_order_acq_rel);
+    const bool state_changed = state != previous_state;
+    const bool should_log =
+        session_active ? (state_changed || hit_count == 1 || (hit_count % 200) == 0)
+                       : (hit_count == 1 || (hit_count % 1000) == 0);
+
+    if (should_log) {
+        const std::wstring message =
+            L"[EVER2] ReplayFileManager::CheckEnumerateProjectFiles hook: hits=" + std::to_wstring(hit_count) +
+            L" sessionActive=" + std::to_wstring(session_active ? 1 : 0) +
+            L" completed=" + std::to_wstring(completed ? 1 : 0) +
+            L" result=" + std::to_wstring(op_result ? 1 : 0);
+        ever::platform::LogDebug(message.c_str());
+    }
+
+    return completed;
+}
+
+void TryKickNativeProjectEnumeration() {
+    if (g_replay_file_manager_start_enum_projects_original == nullptr ||
+        g_replay_file_manager_check_enum_projects_original == nullptr) {
+        return;
+    }
+
+    uintptr_t file_list_ptr = g_last_enum_projects_file_list_ptr.load(std::memory_order_acquire);
+    if (file_list_ptr != 0 && !IsReadableAddressRange(reinterpret_cast<const void*>(file_list_ptr), sizeof(void*))) {
+        file_list_ptr = 0;
+    }
+
+    BeginEnumerateSession();
+
+    if (file_list_ptr == 0) {
+        ever::platform::LogDebug(
+            L"[EVER2] Replay enumerate kick: no captured file list pointer; trying StartEnumerate with nullptr context.");
+    }
+
+    const bool started = g_replay_file_manager_start_enum_projects_original(
+        reinterpret_cast<void*>(file_list_ptr),
+        ".vid");
+
+    const std::wstring start_message =
+        L"[EVER2] Replay enumerate kick: started=" + std::to_wstring(started ? 1 : 0) +
+        L" fileList=" + std::to_wstring(file_list_ptr);
+    ever::platform::LogDebug(start_message.c_str());
+
+    if (!started) {
+        EndEnumerateSession();
+        return;
+    }
+
+    for (int i = 0; i < kEnumerateKickPollIterations; ++i) {
+        bool op_result = false;
+        const bool completed = g_replay_file_manager_check_enum_projects_original(&op_result);
+
+        if (completed) {
+            g_last_enumerate_projects_completed.store(true, std::memory_order_release);
+            g_last_enumerate_projects_result.store(op_result, std::memory_order_release);
+            EndEnumerateSession();
+            const std::wstring done_message =
+                L"[EVER2] Replay enumerate kick: completed result=" + std::to_wstring(op_result ? 1 : 0) +
+                L" polls=" + std::to_wstring(i + 1);
+            ever::platform::LogDebug(done_message.c_str());
+            return;
+        }
+        Sleep(kEnumerateKickPollSleepMs);
+    }
+
+    EndEnumerateSession();
+    ever::platform::LogDebug(L"[EVER2] Replay enumerate kick: timed out waiting for completion.");
+}
+
 void InstallHookNoThrow() {
     ever::hooking::PatternScanner scanner;
     scanner.Initialize();
@@ -872,15 +1034,12 @@ void InstallHookNoThrow() {
         return;
     }
 
-    HRESULT hr = ever::hooking::HookX64Function(
+    if (!InstallDetourForResolvedAddress(
         function_start,
         reinterpret_cast<void*>(&HookedEnumerate),
         &g_enumerate_original,
-        g_enumerate_detour);
-    if (FAILED(hr) || g_enumerate_detour == nullptr || g_enumerate_original == nullptr) {
-        const std::wstring message =
-            L"[EVER2] Replay project logger: failed to install detour. hr=" + std::to_wstring(static_cast<long>(hr));
-        ever::platform::LogDebug(message.c_str());
+        g_enumerate_detour,
+        L"[EVER2] Replay project logger: failed to install detour. hr=")) {
         return;
     }
 
@@ -904,16 +1063,12 @@ void InstallLoadMontageHookNoThrow() {
         return;
     }
 
-    HRESULT hr = ever::hooking::HookX64Function(
+    if (!InstallDetourForResolvedAddress(
         function_start,
         reinterpret_cast<void*>(&HookedLoadMontage),
         &g_load_montage_original,
-        g_load_montage_detour);
-    if (FAILED(hr) || g_load_montage_detour == nullptr || g_load_montage_original == nullptr) {
-        const std::wstring message =
-            L"[EVER2] Replay load montage logger: failed to install detour. hr=" +
-            std::to_wstring(static_cast<long>(hr));
-        ever::platform::LogDebug(message.c_str());
+        g_load_montage_detour,
+        L"[EVER2] Replay load montage logger: failed to install detour. hr=")) {
         return;
     }
 
@@ -923,10 +1078,75 @@ void InstallLoadMontageHookNoThrow() {
     ever::platform::LogDebug(message.c_str());
 }
 
+void InstallReplayFileManagerStartEnumerateProjectFilesHookNoThrow() {
+    ever::hooking::PatternScanner scanner;
+    scanner.Initialize();
+
+    int matched_candidate = -1;
+    const uint64_t function_start = ResolvePatternToFunctionStart(
+        scanner,
+        ever::hooking::GameFunctionPatternId::ReplayFileManagerStartEnumerateProjectFiles,
+        L"[EVER2] ReplayFileManager::StartEnumerateProjectFiles",
+        &matched_candidate);
+    if (function_start == 0) {
+        return;
+    }
+
+    if (!InstallDetourForResolvedAddress(
+        function_start,
+        reinterpret_cast<void*>(&HookedReplayFileManagerStartEnumerateProjectFiles),
+        &g_replay_file_manager_start_enum_projects_original,
+        g_replay_file_manager_start_enum_projects_detour,
+        L"[EVER2] ReplayFileManager::StartEnumerateProjectFiles hook install failed. hr=")) {
+        return;
+    }
+
+    const std::wstring message =
+        L"[EVER2] ReplayFileManager::StartEnumerateProjectFiles hook installed. candidateIndex=" +
+        std::to_wstring(matched_candidate) + L" functionStart=" + std::to_wstring(function_start);
+    ever::platform::LogDebug(message.c_str());
+}
+
+void InstallReplayFileManagerCheckEnumerateProjectFilesHookNoThrow() {
+    ever::hooking::PatternScanner scanner;
+    scanner.Initialize();
+
+    int matched_candidate = -1;
+    const uint64_t matched_address = ResolvePatternToAddress(
+        scanner,
+        ever::hooking::GameFunctionPatternId::ReplayFileManagerCheckEnumerateProjectFiles,
+        L"[EVER2] ReplayFileManager::CheckEnumerateProjectFiles",
+        &matched_candidate,
+        1);
+    const uint64_t function_start = ResolveCheckEnumerateHookAddress(matched_address);
+    if (function_start == 0) {
+        return;
+    }
+
+    const std::wstring address_message =
+        L"[EVER2] ReplayFileManager::CheckEnumerateProjectFiles: matchedAddress=" +
+        std::to_wstring(matched_address) + L" hookAddress=" + std::to_wstring(function_start);
+    ever::platform::LogDebug(address_message.c_str());
+
+    if (!InstallDetourForResolvedAddress(
+        function_start,
+        reinterpret_cast<void*>(&HookedReplayFileManagerCheckEnumerateProjectFiles),
+        &g_replay_file_manager_check_enum_projects_original,
+        g_replay_file_manager_check_enum_projects_detour,
+        L"[EVER2] ReplayFileManager::CheckEnumerateProjectFiles hook install failed. hr=")) {
+        return;
+    }
+
+    const std::wstring message =
+        L"[EVER2] ReplayFileManager::CheckEnumerateProjectFiles hook installed. candidateIndex=" +
+        std::to_wstring(matched_candidate) + L" functionStart=" + std::to_wstring(function_start);
+    ever::platform::LogDebug(message.c_str());
+}
+
 }
 
 void EnsureHookInstalled() {
-    if (g_enumerate_detour != nullptr && g_load_montage_detour != nullptr) {
+    if (AreCoreHooksInstalled()) {
         return;
     }
 
@@ -937,7 +1157,7 @@ void EnsureHookInstalled() {
     }
 
     std::lock_guard<std::mutex> lock(g_install_mutex);
-    if (g_enumerate_detour != nullptr && g_load_montage_detour != nullptr) {
+    if (AreCoreHooksInstalled()) {
         return;
     }
 
@@ -959,12 +1179,29 @@ void EnsureHookInstalled() {
     if (g_load_montage_detour == nullptr) {
         InstallLoadMontageHookNoThrow();
     }
+    if (g_replay_file_manager_start_enum_projects_detour == nullptr) {
+        InstallReplayFileManagerStartEnumerateProjectFilesHookNoThrow();
+    }
+    if (g_replay_file_manager_check_enum_projects_detour == nullptr) {
+        InstallReplayFileManagerCheckEnumerateProjectFilesHookNoThrow();
+    }
+}
+
+void PrimeHookInstallationAsync() {
+    // TODO: Fix this
+    EnsureHookInstalled();
+}
+
+bool IsHookInstalled() {
+    return AreCoreHooksInstalled();
+}
+
+bool HasSnapshotReady() {
+    return g_has_last_snapshot;
 }
 
 void LogSnapshotForUiTrigger() {
-    EnsureHookInstalled();
-
-    if (g_enumerate_detour == nullptr) {
+    if (!EnsureEnumerateHookInstalledForUi()) {
         const std::wstring message =
             L"[EVER2] Load project UI trigger: replay enumeration hook is not installed (pattern mismatch or install failure). attempts=" +
             std::to_wstring(g_install_attempt_count.load(std::memory_order_relaxed));
@@ -990,17 +1227,25 @@ bool TryBuildProjectsJsonForUiTrigger(std::string& out_json, std::wstring& out_e
     out_json.clear();
     out_error.clear();
 
-    EnsureHookInstalled();
-
-    if (g_enumerate_detour == nullptr) {
+    if (!EnsureEnumerateHookInstalledForUi()) {
         out_error =
             L"Replay enumeration hook is not installed yet. Open Rockstar Editor load flow first and retry.";
         return false;
     }
 
     if (!g_has_last_snapshot) {
+        TryKickNativeProjectEnumeration();
+    }
+
+    if (!g_has_last_snapshot) {
         out_error =
             L"Replay snapshot is not ready yet. Open Rockstar Editor load flow once, then click Load project again.";
+        return false;
+    }
+
+    if (g_last_enumerate_projects_completed.load(std::memory_order_acquire) &&
+        !g_last_enumerate_projects_result.load(std::memory_order_acquire)) {
+        out_error = L"Project enumeration completed but returned failure in native ReplayFileManager.";
         return false;
     }
 

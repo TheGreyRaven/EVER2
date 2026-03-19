@@ -1,6 +1,7 @@
 import { create } from "zustand"
 
 import type {
+  EditorCommandResponse,
   ReplayProjectData,
   ReplayProjectsPayload,
 } from "@/components/rockstar-editor/types"
@@ -8,9 +9,11 @@ import type {
 type ProjectStore = {
   payload: ReplayProjectsPayload | null
   selectedProject: ReplayProjectData | null
+  lastCommandResponse: EditorCommandResponse | null
   isLoading: boolean
   setPayload: (payload: ReplayProjectsPayload) => void
   selectProject: (project: ReplayProjectData) => void
+  setLastCommandResponse: (response: EditorCommandResponse) => void
   setLoading: (loading: boolean) => void
   reset: () => void
 }
@@ -18,6 +21,7 @@ type ProjectStore = {
 export const useProjectStore = create<ProjectStore>((set) => ({
   payload: null,
   selectedProject: null,
+  lastCommandResponse: null,
   isLoading: false,
   setPayload: (payload) =>
     set((state) => ({
@@ -30,6 +34,13 @@ export const useProjectStore = create<ProjectStore>((set) => ({
           : state.selectedProject,
     })),
   selectProject: (selectedProject) => set({ selectedProject }),
+  setLastCommandResponse: (lastCommandResponse) => set({ lastCommandResponse }),
   setLoading: (isLoading) => set({ isLoading }),
-  reset: () => set({ payload: null, selectedProject: null, isLoading: false }),
+  reset: () =>
+    set({
+      payload: null,
+      selectedProject: null,
+      lastCommandResponse: null,
+      isLoading: false,
+    }),
 }))

@@ -57,3 +57,21 @@ export type ReplayProjectsPayload = {
   projectCount: number
   projects: ReplayProjectData[]
 }
+
+export type EditorCommandAction =
+  | "quit_game"
+  | "exit_rockstar_editor"
+  | "load_project"
+  | "add_clip_to_project"
+  | "save_project"
+
+export type EditorCommandResponse = {
+  event: "ever2_command_response"
+  action: string
+  status: "accepted" | "error"
+  requestId?: string
+  message?: string
+  sourceClipIndex?: number
+  destinationIndex?: number
+  projectCount?: number
+}

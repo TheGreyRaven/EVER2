@@ -1,6 +1,9 @@
 import { useEffect } from "react"
 
-import { parseReplayProjectsPayload } from "@/components/rockstar-editor/data"
+import {
+  parseEditorCommandResponse,
+  parseReplayProjectsPayload,
+} from "@/components/rockstar-editor/data"
 import { useProjectStore } from "@/store/project-store"
 
 /**
@@ -10,17 +13,37 @@ import { useProjectStore } from "@/store/project-store"
  */
 export const useCefEvents = () => {
   const setPayload = useProjectStore((s) => s.setPayload)
+  const setLoading = useProjectStore((s) => s.setLoading)
+  const setLastCommandResponse = useProjectStore(
+    (s) => s.setLastCommandResponse
+  )
 
   useEffect(() => {
     const handleCefEvent = (event: Event) => {
       const custom = event as CustomEvent<unknown>
       const payload = parseReplayProjectsPayload(custom.detail)
       if (payload) setPayload(payload)
+
+      const response = parseEditorCommandResponse(custom.detail)
+      if (response) {
+        setLastCommandResponse(response)
+        if (response.action === "load_project") {
+          setLoading(false)
+        }
+      }
     }
 
     const handleWindowMessage = (event: MessageEvent<unknown>) => {
       const payload = parseReplayProjectsPayload(event.data)
       if (payload) setPayload(payload)
+
+      const response = parseEditorCommandResponse(event.data)
+      if (response) {
+        setLastCommandResponse(response)
+        if (response.action === "load_project") {
+          setLoading(false)
+        }
+      }
     }
 
     window.addEventListener("ever:cef:message", handleCefEvent as EventListener)
@@ -33,5 +56,5 @@ export const useCefEvents = () => {
       )
       window.removeEventListener("message", handleWindowMessage)
     }
-  }, [setPayload])
+  }, [setLastCommandResponse, setLoading, setPayload])
 }

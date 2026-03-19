@@ -2,19 +2,15 @@ import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import {
   ArrowLeft,
-  CopyPlus,
-  FileMusic,
   FolderOpen,
-  Radio,
-  Subtitles,
-  Trash2,
-  Waves,
+  Plus,
+  Save,
 } from "lucide-react"
 
+import { sendEditorCommand } from "@/components/rockstar-editor/data"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { useProjectStore } from "@/store/project-store"
 import { formatDuration } from "@/pages/project-editor/utils"
 import { cn } from "@/lib/utils"
@@ -77,19 +73,75 @@ const TrackLane = ({
   )
 }
 
-const actionButtons = [
-  { icon: CopyPlus, label: "Duplicate Clip" },
-  { icon: Trash2, label: "Delete Clip" },
-  { icon: Waves, label: "Add Ambient" },
-  { icon: Radio, label: "Add Radio" },
-  { icon: FileMusic, label: "Add Score" },
-  { icon: Subtitles, label: "Add Text" },
-]
+const getClipDisplayName = (clip: { index: number; baseName?: string; path?: string }) =>
+  clip.baseName ??
+  (clip.path ? clip.path.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? null : null) ??
+  `Clip ${clip.index + 1}`
 
 export const NativeMontagePage = () => {
   const navigate = useNavigate()
   const selectedProject = useProjectStore((s) => s.selectedProject)
-  const [activeAction, setActiveAction] = useState<string>("Duplicate Clip")
+  const lastCommandResponse = useProjectStore((s) => s.lastCommandResponse)
+  const [sourceClipIndex, setSourceClipIndex] = useState<number | null>(null)
+
+  const clips = useMemo(() => selectedProject?.clips ?? [], [selectedProject])
+
+  const totalMs = selectedProject?.durationMs ?? 0
+
+  const sourceClip = useMemo(
+    () => clips.find((clip) => clip.index === sourceClipIndex) ?? clips[0] ?? null,
+    [clips, sourceClipIndex],
+  )
+
+  const commandStatusText = useMemo(() => {
+    if (!lastCommandResponse) {
+      return "No command status yet."
+    }
+
+    const base = `${lastCommandResponse.action}: ${lastCommandResponse.status}`
+    if (lastCommandResponse.message) {
+      return `${base} - ${lastCommandResponse.message}`
+    }
+
+    return base
+  }, [lastCommandResponse])
+
+  const handleAddClip = () => {
+    if (!selectedProject || !sourceClip) {
+      return
+    }
+
+    sendEditorCommand("add_clip_to_project", {
+      projectIndex: selectedProject.index,
+      sourceClipIndex: sourceClip.index,
+      destinationIndex: selectedProject.clips.length,
+    })
+  }
+
+  const handleSaveProject = () => {
+    if (!selectedProject) {
+      return
+    }
+
+    sendEditorCommand("save_project", {
+      projectIndex: selectedProject.index,
+    })
+  }
+
+  const videoLaneItems = useMemo<LaneItem[]>(() => {
+    if (!selectedProject || clips.length === 0) {
+      return []
+    }
+
+    const clipDuration = Math.max(6000, Math.floor(totalMs / Math.max(clips.length, 1)))
+
+    return clips.map((clip, index) => ({
+      id: `video-${clip.index}`,
+      title: clip.baseName || `Clip ${index + 1}`,
+      startMs: index * clipDuration,
+      durationMs: clipDuration,
+    }))
+  }, [clips, selectedProject, totalMs])
 
   if (!selectedProject) {
     return (
@@ -119,82 +171,8 @@ export const NativeMontagePage = () => {
     )
   }
 
-  const totalMs = selectedProject.durationMs
-
-  const videoLaneItems = useMemo<LaneItem[]>(() => {
-    if (!selectedProject || selectedProject.clips.length === 0) {
-      return []
-    }
-
-    const clipDuration = Math.max(6000, Math.floor(totalMs / Math.max(selectedProject.clips.length, 1)))
-
-    return selectedProject.clips.map((clip, index) => ({
-      id: `video-${clip.index}`,
-      title: clip.baseName || `Clip ${index + 1}`,
-      startMs: index * clipDuration,
-      durationMs: clipDuration,
-    }))
-  }, [selectedProject, totalMs])
-
-  const ambientLaneItems = useMemo<LaneItem[]>(
-    () =>
-      selectedProject
-        ? [
-            {
-              id: "ambient-a",
-              title: "City Ambience",
-              startMs: 4000,
-              durationMs: Math.max(14_000, Math.floor(totalMs * 0.34)),
-            },
-          ]
-        : [],
-    [selectedProject, totalMs],
-  )
-
-  const musicLaneItems = useMemo<LaneItem[]>(
-    () =>
-      selectedProject
-        ? [
-            {
-              id: "music-a",
-              title: "Radio Track Placeholder",
-              startMs: 10_000,
-              durationMs: Math.max(18_000, Math.floor(totalMs * 0.4)),
-            },
-            {
-              id: "music-b",
-              title: "Score Layer Placeholder",
-              startMs: Math.max(30_000, Math.floor(totalMs * 0.45)),
-              durationMs: Math.max(12_000, Math.floor(totalMs * 0.25)),
-            },
-          ]
-        : [],
-    [selectedProject, totalMs],
-  )
-
-  const textLaneItems = useMemo<LaneItem[]>(
-    () =>
-      selectedProject
-        ? [
-            {
-              id: "text-a",
-              title: "Intro Title",
-              startMs: 3000,
-              durationMs: 6000,
-            },
-            {
-              id: "text-b",
-              title: "Outro Card",
-              startMs: Math.max(20_000, totalMs - 10_000),
-              durationMs: 4500,
-            },
-          ]
-        : [],
-    [selectedProject, totalMs],
-  )
-
   return (
-    <div className="w-[1680px] overflow-hidden rounded-2xl border border-white/6 bg-[#0c1016]/95 shadow-[0_40px_120px_rgba(0,0,0,0.88)] backdrop-blur-[2px]">
+    <div className="w-420 overflow-hidden rounded-2xl border border-white/6 bg-[#0c1016]/95 shadow-[0_40px_120px_rgba(0,0,0,0.88)] backdrop-blur-[2px]">
       <header className="relative border-b border-white/6 px-8 pb-5 pt-7">
         <div className="pointer-events-none absolute inset-0 bg-linear-to-b from-amber-400/5 via-amber-300/2 to-transparent" />
         <div className="relative flex items-end justify-between gap-8">
@@ -228,7 +206,7 @@ export const NativeMontagePage = () => {
         </div>
       </header>
 
-      <div className="grid h-[790px] min-h-0 grid-cols-[1fr_330px] gap-4 p-6">
+      <div className="grid h-197.5 min-h-0 grid-cols-[1fr_330px] gap-4 p-6">
         <Card className="flex min-h-0 flex-col border-white/6 bg-black/22 p-0">
           <div className="flex items-center justify-between border-b border-white/6 px-4 py-3">
             <div>
@@ -251,42 +229,24 @@ export const NativeMontagePage = () => {
             <TimelinePanel />
           </div>
 
-          <div className="max-h-[280px] min-h-[220px] overflow-hidden">
+          <div className="max-h-70 min-h-55 overflow-hidden">
             <div className="grid grid-cols-[170px_1fr] border-b border-white/6 bg-black/24">
               <div className="border-r border-white/6 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/35">
                 Track
               </div>
               <div className="px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/25">
-                Timeline Lanes (Placeholder)
+                Timeline Video Lane
               </div>
             </div>
 
-            <ScrollArea className="h-[230px]">
+            <div className="h-57.5 overflow-y-auto">
               <TrackLane
                 laneLabel="Video"
                 accentClass="border-amber-300/45 bg-amber-300/20 text-amber-100/90"
                 items={videoLaneItems}
                 totalMs={totalMs}
               />
-              <TrackLane
-                laneLabel="Ambient"
-                accentClass="border-cyan-300/45 bg-cyan-300/18 text-cyan-100/90"
-                items={ambientLaneItems}
-                totalMs={totalMs}
-              />
-              <TrackLane
-                laneLabel="Radio + Score"
-                accentClass="border-orange-300/45 bg-orange-300/18 text-orange-100/90"
-                items={musicLaneItems}
-                totalMs={totalMs}
-              />
-              <TrackLane
-                laneLabel="Text"
-                accentClass="border-violet-300/45 bg-violet-300/18 text-violet-100/90"
-                items={textLaneItems}
-                totalMs={totalMs}
-              />
-            </ScrollArea>
+            </div>
           </div>
         </Card>
 
@@ -295,44 +255,59 @@ export const NativeMontagePage = () => {
             Montage Actions
           </p>
           <p className="mt-1 text-[11px] text-white/42">
-            Placeholder command panel based on Rockstar Editor operation flow.
+            Native bridge actions for clip insertion and project save.
           </p>
 
-          <div className="mt-4 space-y-2">
-            {actionButtons.map((action) => {
-              const Icon = action.icon
-              const isActive = action.label === activeAction
+          <div className="mt-4 rounded-lg border border-white/7 bg-white/2 p-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/22">
+              Add Clip To Timeline
+            </p>
+            <p className="mt-2 text-[11px] text-white/40">
+              Select a source clip and append it to the end of the project timeline.
+            </p>
 
-              return (
-                <Button
-                  key={action.label}
-                  variant="ghost"
-                  className={cn(
-                    "h-auto w-full justify-start gap-2.5 rounded-lg border px-3 py-2.5 text-left",
-                    isActive
-                      ? "border-amber-300/25 bg-amber-300/10 text-amber-200/90"
-                      : "border-white/8 bg-white/2 text-white/65 hover:bg-white/5",
-                  )}
-                  onClick={() => setActiveAction(action.label)}
-                >
-                  <Icon className="size-4" />
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.11em]">
-                    {action.label}
-                  </span>
-                </Button>
-              )
-            })}
+            <select
+              className="mt-3 w-full rounded-md border border-white/10 bg-black/25 px-2.5 py-2 text-[11px] text-white/80 outline-none"
+              value={sourceClip?.index ?? 0}
+              onChange={(event) => setSourceClipIndex(Number(event.target.value))}
+              disabled={selectedProject.clips.length === 0}
+            >
+              {selectedProject.clips.map((clip) => (
+                <option key={clip.index} value={clip.index}>
+                  {getClipDisplayName(clip)}
+                </option>
+              ))}
+            </select>
+
+            <Button
+              variant="ghost"
+              className="mt-3 w-full border border-amber-300/25 bg-amber-300/10 text-amber-200/90 hover:bg-amber-300/15"
+              onClick={handleAddClip}
+              disabled={selectedProject.clips.length === 0}
+            >
+              <Plus className="size-4" />
+              Add clip
+            </Button>
           </div>
 
           <Separator className="my-4 bg-white/6" />
 
           <div className="rounded-lg border border-white/7 bg-white/2 p-3">
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/22">
-              Active Placeholder Action
+              Save Project
             </p>
-            <p className="mt-2 text-[12px] font-semibold text-white/85">{activeAction}</p>
-            <p className="mt-2 text-[11px] leading-relaxed text-white/42">
-              This panel is UI-only for now. Native function calls can later be routed through your CEF bridge and mapped directly to project wrapper hooks.
+
+            <Button
+              variant="ghost"
+              className="mt-3 w-full border border-cyan-300/25 bg-cyan-300/10 text-cyan-100/90 hover:bg-cyan-300/15"
+              onClick={handleSaveProject}
+            >
+              <Save className="size-4" />
+              Save project
+            </Button>
+
+            <p className="mt-3 text-[10px] leading-relaxed text-white/40">
+              {commandStatusText}
             </p>
           </div>
         </Card>
