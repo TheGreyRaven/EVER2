@@ -8,7 +8,14 @@
         <Filter Include="src\core" />
         <Filter Include="src\features" />
         <Filter Include="src\features\commands" />
-        <Filter Include="src\features\editor_projects" />
+        <Filter Include="src\features\rockstar_editor_menu" />
+        <Filter Include="src\features\rockstar_editor_menu\internal" />
+        <Filter Include="src\features\rockstar_editor_menu\move_staging_clip_to_project" />
+        <Filter Include="src\features\rockstar_editor_menu\prepare_staging_clip_by_index" />
+        <Filter Include="src\features\rockstar_editor_menu\prepare_staging_clip_by_name" />
+        <Filter Include="src\features\rockstar_editor_menu\project_start_load" />
+        <Filter Include="src\features\rockstar_editor_menu\save_project" />
+        <Filter Include="src\features\rockstar_editor_menu\start_load_project" />
         <Filter Include="src\features\exit_rockstar_editor" />
         <Filter Include="src\features\quit_game" />
         <Filter Include="src\features\replay_project_logger" />
@@ -21,7 +28,14 @@
         <Filter Include="include\ever\core" />
         <Filter Include="include\ever\features" />
         <Filter Include="include\ever\features\commands" />
-        <Filter Include="include\ever\features\editor_projects" />
+        <Filter Include="include\ever\features\rockstar_editor_menu" />
+        <Filter Include="include\ever\features\rockstar_editor_menu\internal" />
+        <Filter Include="include\ever\features\rockstar_editor_menu\move_staging_clip_to_project" />
+        <Filter Include="include\ever\features\rockstar_editor_menu\prepare_staging_clip_by_index" />
+        <Filter Include="include\ever\features\rockstar_editor_menu\prepare_staging_clip_by_name" />
+        <Filter Include="include\ever\features\rockstar_editor_menu\project_start_load" />
+        <Filter Include="include\ever\features\rockstar_editor_menu\save_project" />
+        <Filter Include="include\ever\features\rockstar_editor_menu\start_load_project" />
         <Filter Include="include\ever\features\exit_rockstar_editor" />
         <Filter Include="include\ever\features\quit_game" />
         <Filter Include="include\ever\features\replay_project_logger" />
@@ -91,8 +105,29 @@
         <ClCompile Include="src\features\commands\command_dispatcher.cpp">
             <Filter>src\features\commands</Filter>
         </ClCompile>
-        <ClCompile Include="src\features\editor_projects\editor_projects_bridge.cpp">
-            <Filter>src\features\editor_projects</Filter>
+        <ClCompile Include="src\features\rockstar_editor_menu\internal\rockstar_editor_menu_state.cpp">
+            <Filter>src\features\rockstar_editor_menu\internal</Filter>
+        </ClCompile>
+        <ClCompile Include="src\features\rockstar_editor_menu\move_staging_clip_to_project\move_staging_clip_to_project_hook.cpp">
+            <Filter>src\features\rockstar_editor_menu\move_staging_clip_to_project</Filter>
+        </ClCompile>
+        <ClCompile Include="src\features\rockstar_editor_menu\prepare_staging_clip_by_index\prepare_staging_clip_by_index_hook.cpp">
+            <Filter>src\features\rockstar_editor_menu\prepare_staging_clip_by_index</Filter>
+        </ClCompile>
+        <ClCompile Include="src\features\rockstar_editor_menu\prepare_staging_clip_by_name\prepare_staging_clip_by_name_resolver.cpp">
+            <Filter>src\features\rockstar_editor_menu\prepare_staging_clip_by_name</Filter>
+        </ClCompile>
+        <ClCompile Include="src\features\rockstar_editor_menu\project_start_load\project_start_load_hook.cpp">
+            <Filter>src\features\rockstar_editor_menu\project_start_load</Filter>
+        </ClCompile>
+        <ClCompile Include="src\features\rockstar_editor_menu\rockstar_editor_menu_bridge.cpp">
+            <Filter>src\features\rockstar_editor_menu</Filter>
+        </ClCompile>
+        <ClCompile Include="src\features\rockstar_editor_menu\save_project\save_project_hook.cpp">
+            <Filter>src\features\rockstar_editor_menu\save_project</Filter>
+        </ClCompile>
+        <ClCompile Include="src\features\rockstar_editor_menu\start_load_project\start_load_project_resolver.cpp">
+            <Filter>src\features\rockstar_editor_menu\start_load_project</Filter>
         </ClCompile>
         <ClCompile Include="src\features\exit_rockstar_editor\exit_rockstar_editor_action.cpp">
             <Filter>src\features\exit_rockstar_editor</Filter>
@@ -152,8 +187,29 @@
         <ClInclude Include="include\ever\features\commands\command_dispatcher.h">
             <Filter>include\ever\features\commands</Filter>
         </ClInclude>
-        <ClInclude Include="include\ever\features\editor_projects\editor_projects_bridge.h">
-            <Filter>include\ever\features\editor_projects</Filter>
+        <ClInclude Include="include\ever\features\rockstar_editor_menu\internal\rockstar_editor_menu_state.h">
+            <Filter>include\ever\features\rockstar_editor_menu\internal</Filter>
+        </ClInclude>
+        <ClInclude Include="include\ever\features\rockstar_editor_menu\move_staging_clip_to_project\move_staging_clip_to_project_hook.h">
+            <Filter>include\ever\features\rockstar_editor_menu\move_staging_clip_to_project</Filter>
+        </ClInclude>
+        <ClInclude Include="include\ever\features\rockstar_editor_menu\prepare_staging_clip_by_index\prepare_staging_clip_by_index_hook.h">
+            <Filter>include\ever\features\rockstar_editor_menu\prepare_staging_clip_by_index</Filter>
+        </ClInclude>
+        <ClInclude Include="include\ever\features\rockstar_editor_menu\prepare_staging_clip_by_name\prepare_staging_clip_by_name_resolver.h">
+            <Filter>include\ever\features\rockstar_editor_menu\prepare_staging_clip_by_name</Filter>
+        </ClInclude>
+        <ClInclude Include="include\ever\features\rockstar_editor_menu\project_start_load\project_start_load_hook.h">
+            <Filter>include\ever\features\rockstar_editor_menu\project_start_load</Filter>
+        </ClInclude>
+        <ClInclude Include="include\ever\features\rockstar_editor_menu\rockstar_editor_menu_bridge.h">
+            <Filter>include\ever\features\rockstar_editor_menu</Filter>
+        </ClInclude>
+        <ClInclude Include="include\ever\features\rockstar_editor_menu\save_project\save_project_hook.h">
+            <Filter>include\ever\features\rockstar_editor_menu\save_project</Filter>
+        </ClInclude>
+        <ClInclude Include="include\ever\features\rockstar_editor_menu\start_load_project\start_load_project_resolver.h">
+            <Filter>include\ever\features\rockstar_editor_menu\start_load_project</Filter>
         </ClInclude>
         <ClInclude Include="include\ever\features\exit_rockstar_editor\exit_rockstar_editor_action.h">
             <Filter>include\ever\features\exit_rockstar_editor</Filter>

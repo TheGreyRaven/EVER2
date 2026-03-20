@@ -165,16 +165,16 @@ DWORD WINAPI RuntimeMonitorThreadProc(LPVOID) {
         const bool init_attempted = ever::core::IsOverlayInitAttempted();
         const bool overlay_initialized = ever::core::IsOverlayInitialized();
         const unsigned long long script_loops = ever::core::GetScriptMainLoopCount();
-        const std::wstring message =
-            L"[EVER2] DllMain monitor heartbeat=" + std::to_wstring(heartbeat) +
-            L" elapsedMs=" + std::to_wstring(elapsed_ms) +
-            L" presentCount=" + std::to_wstring(present_count) +
-            L" nativeRendererActive=" + std::to_wstring(native_active ? 1 : 0) +
-            L" scriptMainStarted=" + std::to_wstring(script_started ? 1 : 0) +
-            L" scriptLoops=" + std::to_wstring(script_loops) +
-            L" overlayInitAttempted=" + std::to_wstring(init_attempted ? 1 : 0) +
-            L" overlayInitialized=" + std::to_wstring(overlay_initialized ? 1 : 0);
-        ever::platform::LogDebug(message.c_str());
+        // const std::wstring message =
+        //     L"[EVER2] DllMain monitor heartbeat=" + std::to_wstring(heartbeat) +
+        //     L" elapsedMs=" + std::to_wstring(elapsed_ms) +
+        //     L" presentCount=" + std::to_wstring(present_count) +
+        //     L" nativeRendererActive=" + std::to_wstring(native_active ? 1 : 0) +
+        //     L" scriptMainStarted=" + std::to_wstring(script_started ? 1 : 0) +
+        //     L" scriptLoops=" + std::to_wstring(script_loops) +
+        //     L" overlayInitAttempted=" + std::to_wstring(init_attempted ? 1 : 0) +
+        //     L" overlayInitialized=" + std::to_wstring(overlay_initialized ? 1 : 0);
+        // ever::platform::LogDebug(message.c_str());
 
         if (!g_console_deferred_started.load(std::memory_order_acquire) && heartbeat >= 2 && (present_count > 0 || native_active)) {
             ever::platform::InitializeDebugConsole();

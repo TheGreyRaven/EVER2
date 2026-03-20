@@ -23,6 +23,19 @@ export const NativeProjectsPage = () => {
     sendEditorCommand("load_project")
   }
 
+  const handleEditProject = () => {
+    if (!selectedProject) {
+      return
+    }
+
+    sendEditorCommand("load_project", {
+      nativeLoad: true,
+      projectIndex: selectedProject.index,
+      projectPath: selectedProject.path,
+    })
+    navigate("/editor/montage")
+  }
+
   return (
     <div className="flex h-full min-h-0 gap-4 p-6">
       <Card className="flex h-full w-80 min-h-0 shrink-0 flex-col border-white/6 bg-black/22 p-0">
@@ -129,7 +142,7 @@ export const NativeProjectsPage = () => {
               <Button
                 variant="ghost"
                 className="border border-amber-300/25 bg-amber-400/10 text-amber-300/90 hover:bg-amber-300/15"
-                onClick={() => navigate("/editor/montage")}
+                onClick={handleEditProject}
               >
                 <Sparkles className="size-4" />
                 Edit project

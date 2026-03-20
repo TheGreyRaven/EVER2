@@ -27,11 +27,15 @@ export const useProjectStore = create<ProjectStore>((set) => ({
     set((state) => ({
       payload,
       isLoading: false,
-      // Auto-select first project if nothing selected yet
+      // Preserve selection by index across payload refreshes and always rebind to the latest object.
       selectedProject:
-        state.selectedProject == null && payload.projects.length > 0
-          ? payload.projects[0]
-          : state.selectedProject,
+        payload.projects.length === 0
+          ? null
+          : state.selectedProject == null
+            ? payload.projects[0]
+            : (payload.projects.find(
+                (project) => project.index === state.selectedProject?.index
+              ) ?? payload.projects[0]),
     })),
   selectProject: (selectedProject) => set({ selectedProject }),
   setLastCommandResponse: (lastCommandResponse) => set({ lastCommandResponse }),

@@ -14,6 +14,7 @@ std::atomic<uint64_t> g_input_keyboard_consumed_cef{0};
 std::atomic<uint64_t> g_input_keyboard_passthrough{0};
 std::atomic<bool> g_cef_interactions_enabled{false};
 std::atomic<bool> g_cef_keyboard_interactions_enabled{false};
+std::atomic<bool> g_cef_browser_focused{false};
 std::atomic<ULONGLONG> g_last_cef_input_activity_tick{0};
 
 std::mutex g_input_hook_mutex;

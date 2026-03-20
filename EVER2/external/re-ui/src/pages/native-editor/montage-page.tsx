@@ -11,10 +11,18 @@ import { sendEditorCommand } from "@/components/rockstar-editor/data"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { useProjectStore } from "@/store/project-store"
 import { formatDuration } from "@/pages/project-editor/utils"
 import { cn } from "@/lib/utils"
 import { TimelinePanel } from "@/pages/project-editor/timeline-panel"
+import type { AvailableClipData } from "@/components/rockstar-editor/types"
 
 type LaneItem = {
   id: string
@@ -73,25 +81,52 @@ const TrackLane = ({
   )
 }
 
-const getClipDisplayName = (clip: { index: number; baseName?: string; path?: string }) =>
+const getAvailableClipDisplayName = (clip: AvailableClipData) =>
   clip.baseName ??
   (clip.path ? clip.path.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") ?? null : null) ??
-  `Clip ${clip.index + 1}`
+  `UID ${clip.uid}`
+
+type SourceClipOption = {
+  key: string
+  label: string
+  sourceIndex?: number
+  baseName?: string
+  ownerIdText?: string
+}
 
 export const NativeMontagePage = () => {
   const navigate = useNavigate()
+  const payload = useProjectStore((s) => s.payload)
   const selectedProject = useProjectStore((s) => s.selectedProject)
   const lastCommandResponse = useProjectStore((s) => s.lastCommandResponse)
-  const [sourceClipIndex, setSourceClipIndex] = useState<number | null>(null)
+  const [selectedSourceKey, setSelectedSourceKey] = useState<string>("")
 
   const clips = useMemo(() => selectedProject?.clips ?? [], [selectedProject])
 
   const totalMs = selectedProject?.durationMs ?? 0
 
-  const sourceClip = useMemo(
-    () => clips.find((clip) => clip.index === sourceClipIndex) ?? clips[0] ?? null,
-    [clips, sourceClipIndex],
-  )
+  const sourceOptions = useMemo<SourceClipOption[]>(() => {
+    const global = payload?.availableClips ?? []
+    return global.map((clip) => ({
+      key: `global-${clip.uid}`,
+      label: getAvailableClipDisplayName(clip),
+      sourceIndex: clip.sourceIndex,
+      baseName: clip.baseName,
+      ownerIdText: clip.ownerIdText,
+    }))
+  }, [payload])
+
+  const selectedSourceOption = useMemo<SourceClipOption | null>(() => {
+    if (sourceOptions.length === 0) {
+      return null
+    }
+
+    if (!selectedSourceKey) {
+      return sourceOptions[0]
+    }
+
+    return sourceOptions.find((option) => option.key === selectedSourceKey) ?? sourceOptions[0]
+  }, [selectedSourceKey, sourceOptions])
 
   const commandStatusText = useMemo(() => {
     if (!lastCommandResponse) {
@@ -107,15 +142,25 @@ export const NativeMontagePage = () => {
   }, [lastCommandResponse])
 
   const handleAddClip = () => {
-    if (!selectedProject || !sourceClip) {
+    if (!selectedProject || !selectedSourceOption) {
       return
     }
 
-    sendEditorCommand("add_clip_to_project", {
+    const commandPayload: Record<string, unknown> = {
       projectIndex: selectedProject.index,
-      sourceClipIndex: sourceClip.index,
       destinationIndex: selectedProject.clips.length,
-    })
+    }
+
+    if (selectedSourceOption.sourceIndex != null) {
+      commandPayload.sourceClipIndex = selectedSourceOption.sourceIndex
+    }
+
+    if (selectedSourceOption.baseName && selectedSourceOption.ownerIdText) {
+      commandPayload.sourceClipBaseName = selectedSourceOption.baseName
+      commandPayload.sourceClipOwnerIdText = selectedSourceOption.ownerIdText
+    }
+
+    sendEditorCommand("add_clip_to_project", commandPayload)
   }
 
   const handleSaveProject = () => {
@@ -266,24 +311,36 @@ export const NativeMontagePage = () => {
               Select a source clip and append it to the end of the project timeline.
             </p>
 
-            <select
-              className="mt-3 w-full rounded-md border border-white/10 bg-black/25 px-2.5 py-2 text-[11px] text-white/80 outline-none"
-              value={sourceClip?.index ?? 0}
-              onChange={(event) => setSourceClipIndex(Number(event.target.value))}
-              disabled={selectedProject.clips.length === 0}
+            <Select
+              value={selectedSourceOption?.key ?? ""}
+              onValueChange={setSelectedSourceKey}
+              disabled={sourceOptions.length === 0}
             >
-              {selectedProject.clips.map((clip) => (
-                <option key={clip.index} value={clip.index}>
-                  {getClipDisplayName(clip)}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger className="mt-3 h-9 w-full border-white/10 bg-black/25 text-[11px] text-white/80">
+                <SelectValue placeholder="Select source clip" />
+              </SelectTrigger>
+              <SelectContent className="max-h-64 border-white/12 bg-[#101821] text-[11px] text-white/85">
+                {sourceOptions.map((option) => (
+                  <SelectItem key={option.key} value={option.key} className="text-[11px]">
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {sourceOptions.length <= 1 && (
+              <p className="mt-2 text-[10px] text-white/35">
+                {sourceOptions.length === 0
+                  ? "No available clips from native clip cache yet. Load project again after clip enumeration completes."
+                  : "Only one source clip is currently available."}
+              </p>
+            )}
 
             <Button
               variant="ghost"
               className="mt-3 w-full border border-amber-300/25 bg-amber-300/10 text-amber-200/90 hover:bg-amber-300/15"
               onClick={handleAddClip}
-              disabled={selectedProject.clips.length === 0}
+              disabled={selectedSourceOption == null}
             >
               <Plus className="size-4" />
               Add clip

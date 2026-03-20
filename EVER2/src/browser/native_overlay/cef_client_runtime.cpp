@@ -74,6 +74,60 @@ bool IsNoisyDevToolsConsoleMessage(cef_log_severity_t severity, const CefString&
     return message_utf8.rfind("Main._", 0) == 0;
 }
 
+void BlendPremultipliedPixel(uint8_t* dst, const uint8_t* src) {
+    const uint32_t src_alpha = src[3];
+    if (src_alpha == 0) {
+        return;
+    }
+
+    if (src_alpha == 255) {
+        std::memcpy(dst, src, 4);
+        return;
+    }
+
+    const uint32_t inv_alpha = 255u - src_alpha;
+    for (int i = 0; i < 3; ++i) {
+        const uint32_t blended = static_cast<uint32_t>(src[i]) + ((static_cast<uint32_t>(dst[i]) * inv_alpha + 127u) / 255u);
+        dst[i] = static_cast<uint8_t>((std::min)(blended, 255u));
+    }
+
+    const uint32_t dst_alpha = static_cast<uint32_t>(dst[3]);
+    const uint32_t out_alpha = src_alpha + ((dst_alpha * inv_alpha + 127u) / 255u);
+    dst[3] = static_cast<uint8_t>((std::min)(out_alpha, 255u));
+}
+
+void CompositePopupIntoFrame(FrameBuffer& frame, const PopupBuffer& popup) {
+    if (!popup.visible || frame.width <= 0 || frame.height <= 0 || popup.width <= 0 || popup.height <= 0 ||
+        frame.pixels.empty() || popup.pixels.empty()) {
+        return;
+    }
+
+    const int clip_left = (std::max)(0, popup.x);
+    const int clip_top = (std::max)(0, popup.y);
+    const int clip_right = (std::min)(frame.width, popup.x + popup.width);
+    const int clip_bottom = (std::min)(frame.height, popup.y + popup.height);
+    if (clip_left >= clip_right || clip_top >= clip_bottom) {
+        return;
+    }
+
+    for (int y = clip_top; y < clip_bottom; ++y) {
+        const int popup_y = y - popup.y;
+        const size_t popup_row = static_cast<size_t>(popup_y) * static_cast<size_t>(popup.width) * 4ULL;
+        const size_t frame_row = static_cast<size_t>(y) * static_cast<size_t>(frame.width) * 4ULL;
+
+        for (int x = clip_left; x < clip_right; ++x) {
+            const int popup_x = x - popup.x;
+            const size_t popup_offset = popup_row + static_cast<size_t>(popup_x) * 4ULL;
+            const size_t frame_offset = frame_row + static_cast<size_t>(x) * 4ULL;
+            if (popup_offset + 3 >= popup.pixels.size() || frame_offset + 3 >= frame.pixels.size()) {
+                continue;
+            }
+
+            BlendPremultipliedPixel(&frame.pixels[frame_offset], &popup.pixels[popup_offset]);
+        }
+    }
+}
+
 std::filesystem::path GetModuleDirectory() {
     HMODULE module = nullptr;
     if (!GetModuleHandleExW(
@@ -593,9 +647,59 @@ public:
         rect = CefRect(0, 0, (std::max)(width, 1), (std::max)(height, 1));
     }
 
+    void OnPopupShow(CefRefPtr<CefBrowser> browser, bool show) override {
+        {
+            std::lock_guard<std::mutex> lock(g_frame_mutex);
+            g_popup.visible = show;
+            if (!show) {
+                g_popup.pixels.clear();
+                g_popup.width = 0;
+                g_popup.height = 0;
+            }
+        }
+
+        if (!show) {
+            std::lock_guard<std::mutex> lock(g_cef_shared_texture_mutex);
+            g_cef_shared_popup_texture_handle = nullptr;
+            g_cef_shared_popup_texture_refresh_required = false;
+            g_cef_shared_popup_texture_sequence = 0;
+        }
+
+        if (browser != nullptr && browser->GetHost() != nullptr) {
+            browser->GetHost()->Invalidate(PET_VIEW);
+        }
+
+        const std::wstring message =
+            L"[EVER2] Native CEF popup visibility changed: show=" + std::to_wstring(show ? 1 : 0);
+        Log(message.c_str());
+    }
+
+    void OnPopupSize(CefRefPtr<CefBrowser> browser, const CefRect& rect) override {
+        {
+            std::lock_guard<std::mutex> lock(g_frame_mutex);
+            g_popup.x = rect.x;
+            g_popup.y = rect.y;
+            g_popup.width = (std::max)(rect.width, 0);
+            g_popup.height = (std::max)(rect.height, 0);
+        }
+
+        if (browser != nullptr && browser->GetHost() != nullptr) {
+            browser->GetHost()->Invalidate(PET_VIEW);
+        }
+
+        wchar_t msg[220] = {};
+        swprintf_s(msg,
+                   L"[EVER2] Native CEF popup rect updated: x=%d y=%d w=%d h=%d",
+                   rect.x,
+                   rect.y,
+                   rect.width,
+                   rect.height);
+        Log(msg);
+    }
+
     void OnPaint(
         CefRefPtr<CefBrowser>,
-        PaintElementType,
+        PaintElementType type,
         const RectList&,
         const void* buffer,
         int width,
@@ -606,29 +710,42 @@ public:
 
         const size_t bytes = static_cast<size_t>(width) * static_cast<size_t>(height) * 4ULL;
         std::lock_guard<std::mutex> lock(g_frame_mutex);
+
+        if (type == PET_POPUP) {
+            g_popup.width = width;
+            g_popup.height = height;
+            g_popup.sequence++;
+            g_popup.pixels.resize(bytes);
+            std::memcpy(g_popup.pixels.data(), buffer, bytes);
+            return;
+        }
+
         g_frame.width = width;
         g_frame.height = height;
         g_frame.sequence++;
         g_frame.pixels.resize(bytes);
-        memcpy(g_frame.pixels.data(), buffer, bytes);
+        std::memcpy(g_frame.pixels.data(), buffer, bytes);
+        CompositePopupIntoFrame(g_frame, g_popup);
 
         const uint64_t paint_calls = g_onpaint_calls.fetch_add(1, std::memory_order_relaxed) + 1;
         if (paint_calls == 1 || (paint_calls % 120) == 0) {
             wchar_t msg[256] = {};
             swprintf_s(
                 msg,
-                L"[EVER2] Native CEF OnPaint call=%llu frameSeq=%llu size=%dx%d bytes=%zu",
+                L"[EVER2] Native CEF OnPaint call=%llu frameSeq=%llu size=%dx%d bytes=%zu type=%d popupVisible=%d",
                 static_cast<unsigned long long>(paint_calls),
                 static_cast<unsigned long long>(g_frame.sequence),
                 width,
                 height,
-                bytes);
+                bytes,
+                static_cast<int>(type),
+                g_popup.visible ? 1 : 0);
             Log(msg);
         }
     }
 
     void OnAcceleratedPaint(CefRefPtr<CefBrowser>,
-                            PaintElementType,
+                            PaintElementType type,
                             const RectList&,
                             void* shared_handle) override {
         if (!g_cef_shared_texture_enabled.load(std::memory_order_acquire) || shared_handle == nullptr) {
@@ -636,13 +753,19 @@ public:
         }
 
         std::lock_guard<std::mutex> lock(g_cef_shared_texture_mutex);
-        g_cef_shared_texture_handle = shared_handle;
-        g_cef_shared_texture_refresh_required = true;
-        ++g_cef_shared_texture_sequence;
+        if (type == PET_POPUP) {
+            g_cef_shared_popup_texture_handle = shared_handle;
+            g_cef_shared_popup_texture_refresh_required = true;
+            ++g_cef_shared_popup_texture_sequence;
+        } else {
+            g_cef_shared_texture_handle = shared_handle;
+            g_cef_shared_texture_refresh_required = true;
+            ++g_cef_shared_texture_sequence;
+        }
     }
 
     void OnAcceleratedPaint2(CefRefPtr<CefBrowser>,
-                             PaintElementType,
+                             PaintElementType type,
                              const RectList&,
                              void* shared_handle,
                              bool new_texture) override {
@@ -651,9 +774,15 @@ public:
         }
 
         std::lock_guard<std::mutex> lock(g_cef_shared_texture_mutex);
-        g_cef_shared_texture_handle = shared_handle;
-        g_cef_shared_texture_refresh_required = g_cef_shared_texture_refresh_required || new_texture;
-        ++g_cef_shared_texture_sequence;
+        if (type == PET_POPUP) {
+            g_cef_shared_popup_texture_handle = shared_handle;
+            g_cef_shared_popup_texture_refresh_required = g_cef_shared_popup_texture_refresh_required || new_texture;
+            ++g_cef_shared_popup_texture_sequence;
+        } else {
+            g_cef_shared_texture_handle = shared_handle;
+            g_cef_shared_texture_refresh_required = g_cef_shared_texture_refresh_required || new_texture;
+            ++g_cef_shared_texture_sequence;
+        }
     }
 
     IMPLEMENT_REFCOUNTING(NativeOverlayRenderHandler);

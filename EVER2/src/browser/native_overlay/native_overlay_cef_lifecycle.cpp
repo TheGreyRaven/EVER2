@@ -229,6 +229,9 @@ bool InitializeCefInProcess() {
         g_cef_shared_texture_handle = nullptr;
         g_cef_shared_texture_refresh_required = false;
         g_cef_shared_texture_sequence = 0;
+        g_cef_shared_popup_texture_handle = nullptr;
+        g_cef_shared_popup_texture_refresh_required = false;
+        g_cef_shared_popup_texture_sequence = 0;
     }
 
     CefBrowserSettings browser_settings;
@@ -284,6 +287,9 @@ void ShutdownCefInProcess() {
         g_cef_shared_texture_handle = nullptr;
         g_cef_shared_texture_refresh_required = false;
         g_cef_shared_texture_sequence = 0;
+        g_cef_shared_popup_texture_handle = nullptr;
+        g_cef_shared_popup_texture_refresh_required = false;
+        g_cef_shared_popup_texture_sequence = 0;
     }
     g_browser_ready.store(false, std::memory_order_release);
 

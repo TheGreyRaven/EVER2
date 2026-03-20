@@ -124,9 +124,11 @@ void EnableCEFInteractions(bool enabled) {
             CefRefPtr<CefBrowserHost> host = browser->GetHost();
             if (host != nullptr) {
                 host->SendCaptureLostEvent();
+                host->SetFocus(false);
             }
         }
 #endif
+        g_cef_browser_focused.store(false, std::memory_order_release);
     }
 
     wchar_t line[160] = {};

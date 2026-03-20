@@ -143,14 +143,14 @@ bool OnConHostShouldDrawGuiEvent(bool* should_draw) {
     }
 
     const uint64_t calls = g_conhost_on_should_callbacks.fetch_add(1, std::memory_order_relaxed) + 1;
-    if (calls == 1 || (calls % 600) == 0) {
-        wchar_t line[180] = {};
-        swprintf_s(line,
-                   L"[EVER2] ConHost event OnShouldDrawGui callback observed: calls=%llu should=%d",
-                   static_cast<unsigned long long>(calls),
-                   value ? 1 : 0);
-        Log(line);
-    }
+    // if (calls == 1 || (calls % 600) == 0) {
+    //     wchar_t line[180] = {};
+    //     swprintf_s(line,
+    //                L"[EVER2] ConHost event OnShouldDrawGui callback observed: calls=%llu should=%d",
+    //                static_cast<unsigned long long>(calls),
+    //                value ? 1 : 0);
+    //     Log(line);
+    // }
 
     return true;
 }

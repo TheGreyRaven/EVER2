@@ -22,4 +22,7 @@ void LogSnapshotForUiTrigger();
 // Returns false and writes a user-readable reason to out_error when data is unavailable.
 bool TryBuildProjectsJsonForUiTrigger(std::string& out_json, std::wstring& out_error);
 
+// Returns the last montage pointer observed by the native LoadMontage hook.
+uint64_t GetLastLoadedMontagePointer();
+
 }

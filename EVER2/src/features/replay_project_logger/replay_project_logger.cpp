@@ -1,5 +1,6 @@
 #include "ever/features/replay_project_logger/replay_project_logger.h"
 
+#include "ever/features/commands/command_dispatcher.h"
 #include "ever/hooking/game_function_patterns.h"
 #include "ever/hooking/pattern_scanner.h"
 #include "ever/hooking/x64_detour.h"
@@ -12,11 +13,13 @@
 #include <atomic>
 #include <algorithm>
 #include <cstdint>
+#include <cctype>
 #include <ctime>
 #include <cstring>
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ever::features::replay_project_logger {
@@ -35,6 +38,25 @@ constexpr size_t kProjectClipArrayOffset = 0x138;
 constexpr size_t kMaxProjectsInCache = 100;
 constexpr size_t kProjectPathOffset = 0x31;
 constexpr size_t kProjectPathMaxBytes = 260;
+constexpr size_t kClipDataPathOffset = 0x31;
+constexpr size_t kClipDataPathMaxBytes = 260;
+constexpr size_t kClipDataDurationOffset = 0x08;
+constexpr size_t kClipDataOwnerIdOffset = 0x28;
+constexpr size_t kClipDataCorruptOffset = 0x0C;
+constexpr size_t kClipDataFavouriteOffset = 0x140;
+constexpr size_t kClipDataUidOffset = 0x148;
+constexpr size_t kClipDataModdedOffset = 0x16C;
+
+constexpr size_t kFileDataStorageElementsOffset = 0x00;
+constexpr size_t kFileDataStorageCountOffset = 0x08;
+constexpr size_t kFileDataStorageCapacityOffset = 0x0A;
+constexpr size_t kFileDataEntrySize = 0xA0;
+constexpr size_t kFileDataFilenameOffset = 0x00;
+constexpr size_t kFileDataFilenameMaxBytes = 64;
+constexpr size_t kFileDataDisplayNameOffset = 0x40;
+constexpr size_t kFileDataDisplayNameMaxBytes = 60;
+constexpr size_t kFileDataUserIdOffset = 0x90;
+constexpr uint16_t kMaxEnumeratedClipFiles = 2048;
 
 constexpr size_t kReplayInfoMontagePtrOffset = 0xAD8;
 constexpr size_t kReplayInfoPathPtrOffset = 0xAF0;
@@ -70,6 +92,18 @@ using EnumerateFn = uint64_t(__fastcall*)(
 using LoadMontageFn = uint32_t(__fastcall*)(void* this_ptr, void* replay_info, uint64_t* out_extended_result);
 using ReplayFileManagerStartEnumerateProjectFilesFn = bool(__fastcall*)(void* file_list, const char* filter);
 using ReplayFileManagerCheckEnumerateProjectFilesFn = bool(__fastcall*)(bool* result);
+using ReplayFileManagerStartEnumerateClipFilesFn = bool(__fastcall*)(void* file_list, const char* filter);
+using ReplayFileManagerCheckEnumerateClipFilesFn = bool(__fastcall*)(bool* result);
+using ReplayMgrInternalStartEnumerateClipFilesFn = bool(__fastcall*)(const char* filepath, void* file_list, const char* filter);
+using ReplayMgrInternalCheckEnumerateClipFilesFn = bool(__fastcall*)(bool* result);
+using ClipDataInitFn = void(__fastcall*)(
+    void* this_ptr,
+    const char* filename,
+    const void* replay_header,
+    int version_op,
+    bool favourite,
+    bool modded_content,
+    bool is_corrupt);
 
 std::shared_ptr<PLH::x64Detour> g_enumerate_detour;
 EnumerateFn g_enumerate_original = nullptr;
@@ -79,20 +113,61 @@ std::shared_ptr<PLH::x64Detour> g_replay_file_manager_start_enum_projects_detour
 ReplayFileManagerStartEnumerateProjectFilesFn g_replay_file_manager_start_enum_projects_original = nullptr;
 std::shared_ptr<PLH::x64Detour> g_replay_file_manager_check_enum_projects_detour;
 ReplayFileManagerCheckEnumerateProjectFilesFn g_replay_file_manager_check_enum_projects_original = nullptr;
+std::shared_ptr<PLH::x64Detour> g_replay_file_manager_start_enum_clips_detour;
+ReplayFileManagerStartEnumerateClipFilesFn g_replay_file_manager_start_enum_clips_original = nullptr;
+std::shared_ptr<PLH::x64Detour> g_replay_file_manager_check_enum_clips_detour;
+ReplayFileManagerCheckEnumerateClipFilesFn g_replay_file_manager_check_enum_clips_original = nullptr;
+ReplayMgrInternalStartEnumerateClipFilesFn g_replay_mgr_internal_start_enum_clips_original = nullptr;
+ReplayMgrInternalCheckEnumerateClipFilesFn g_replay_mgr_internal_check_enum_clips_original = nullptr;
+std::shared_ptr<PLH::x64Detour> g_clip_data_init_detour;
+ClipDataInitFn g_clip_data_init_original = nullptr;
 std::mutex g_install_mutex;
 std::atomic<uint64_t> g_hook_hits{0};
 std::atomic<uint64_t> g_load_montage_hook_hits{0};
 std::atomic<uint64_t> g_start_enum_projects_hook_hits{0};
 std::atomic<uint64_t> g_check_enum_projects_hook_hits{0};
+std::atomic<uint64_t> g_start_enum_clips_hook_hits{0};
+std::atomic<uint64_t> g_check_enum_clips_hook_hits{0};
+std::atomic<uint64_t> g_clip_data_init_hook_hits{0};
 std::atomic<bool> g_last_enumerate_projects_completed{false};
 std::atomic<bool> g_last_enumerate_projects_result{false};
 std::atomic<uintptr_t> g_last_enum_projects_file_list_ptr{0};
+std::atomic<bool> g_last_enumerate_clips_completed{false};
+std::atomic<bool> g_last_enumerate_clips_result{false};
+std::atomic<uintptr_t> g_last_enum_clips_file_list_ptr{0};
+std::atomic<bool> g_enumerate_clips_session_active{false};
+std::atomic<int> g_last_check_clips_logged_state{-1};
 std::atomic<bool> g_enumerate_session_active{false};
 std::atomic<int> g_last_check_logged_state{-1};
 std::atomic<uint32_t> g_install_attempt_count{0};
 std::atomic<ULONGLONG> g_last_install_attempt_tick{0};
 ReplaySnapshot g_last_snapshot{};
 bool g_has_last_snapshot = false;
+std::atomic<uint64_t> g_last_loaded_montage_ptr{0};
+
+struct ClipMetadata {
+    uint32_t uid = 0;
+    int source_index = -1;
+    std::string path;
+    std::string base_name;
+    uint64_t owner_id = 0;
+    uint32_t duration_ms = 0;
+    bool favourite = false;
+    bool modded = false;
+    bool corrupt = false;
+};
+
+std::mutex g_clip_metadata_mutex;
+std::unordered_map<uint32_t, ClipMetadata> g_clip_metadata_by_uid;
+
+struct FileDataStorageKickState {
+    void* elements = nullptr;
+    uint16_t count = 0;
+    uint16_t capacity = 0;
+};
+
+FileDataStorageKickState g_project_enum_kick_storage{};
+FileDataStorageKickState g_clip_enum_kick_storage{};
 
 using RtlLookupFunctionEntryFn = PRUNTIME_FUNCTION(NTAPI*)(DWORD64, PDWORD64, PUNWIND_HISTORY_TABLE);
 
@@ -361,7 +436,20 @@ bool AreCoreHooksInstalled() {
     return g_enumerate_detour != nullptr &&
            g_load_montage_detour != nullptr &&
            g_replay_file_manager_start_enum_projects_detour != nullptr &&
-           g_replay_file_manager_check_enum_projects_detour != nullptr;
+           g_replay_file_manager_check_enum_projects_detour != nullptr &&
+           g_replay_mgr_internal_start_enum_clips_original != nullptr &&
+           g_replay_mgr_internal_check_enum_clips_original != nullptr;
+}
+
+void BeginEnumerateClipsSession() {
+    g_last_enumerate_clips_completed.store(false, std::memory_order_release);
+    g_last_enumerate_clips_result.store(false, std::memory_order_release);
+    g_last_check_clips_logged_state.store(-1, std::memory_order_release);
+    g_enumerate_clips_session_active.store(true, std::memory_order_release);
+}
+
+void EndEnumerateClipsSession() {
+    g_enumerate_clips_session_active.store(false, std::memory_order_release);
 }
 
 template <typename OriginalFn>
@@ -509,6 +597,140 @@ std::string GetFilenameNoExtension(const std::string& path) {
         filename.erase(dot);
     }
     return filename;
+}
+
+std::string GetFilenameFromPath(const std::string& path) {
+    if (path.empty()) {
+        return std::string();
+    }
+
+    size_t file_start = path.find_last_of("\\/");
+    if (file_start == std::string::npos) {
+        file_start = 0;
+    } else {
+        ++file_start;
+    }
+    return path.substr(file_start);
+}
+
+uint32_t BuildStableClipUid(const std::string& key_name, uint64_t owner_id, uint32_t ordinal) {
+    uint32_t hash = 2166136261u;
+    constexpr uint32_t kFnvPrime = 16777619u;
+
+    for (int i = 0; i < 8; ++i) {
+        const uint8_t part = static_cast<uint8_t>((owner_id >> (i * 8)) & 0xFFu);
+        hash ^= part;
+        hash *= kFnvPrime;
+    }
+
+    for (char c : key_name) {
+        const uint8_t part = static_cast<uint8_t>(std::tolower(static_cast<unsigned char>(c)));
+        hash ^= part;
+        hash *= kFnvPrime;
+    }
+
+    hash ^= ordinal;
+    hash *= kFnvPrime;
+
+    if (hash == 0) {
+        hash = 1;
+    }
+
+    return hash;
+}
+
+void CaptureClipMetadataFromFileDataStorage(uintptr_t storage_ptr, const wchar_t* source_tag) {
+    if (storage_ptr == 0) {
+        return;
+    }
+
+    const auto* storage = reinterpret_cast<const uint8_t*>(storage_ptr);
+    if (!IsReadableAddressRange(storage, 0x10)) {
+        return;
+    }
+
+    uint64_t elements_ptr = 0;
+    uint16_t count = 0;
+    uint16_t capacity = 0;
+    if (!ReadObjectAt(storage, kFileDataStorageElementsOffset, elements_ptr) ||
+        !ReadObjectAt(storage, kFileDataStorageCountOffset, count) ||
+        !ReadObjectAt(storage, kFileDataStorageCapacityOffset, capacity)) {
+        return;
+    }
+
+    if (elements_ptr == 0 || count == 0 || count > kMaxEnumeratedClipFiles || count > capacity) {
+        return;
+    }
+
+    const auto* elements = reinterpret_cast<const uint8_t*>(elements_ptr);
+    const size_t byte_span = static_cast<size_t>(count) * kFileDataEntrySize;
+    if (!IsReadableAddressRange(elements, byte_span)) {
+        return;
+    }
+
+    std::vector<ClipMetadata> harvested;
+    harvested.reserve(count);
+    for (uint16_t i = 0; i < count; ++i) {
+        const auto* entry = elements + (static_cast<size_t>(i) * kFileDataEntrySize);
+        const std::string filename = ReadAsciiCStringAt(
+            reinterpret_cast<const char*>(entry + kFileDataFilenameOffset),
+            kFileDataFilenameMaxBytes);
+        const std::string display_name = ReadAsciiCStringAt(
+            reinterpret_cast<const char*>(entry + kFileDataDisplayNameOffset),
+            kFileDataDisplayNameMaxBytes);
+
+        if (filename.empty() && display_name.empty()) {
+            continue;
+        }
+
+        uint64_t owner_id = 0;
+        ReadObjectAt(entry, kFileDataUserIdOffset, owner_id);
+
+        std::string base_name = display_name;
+        if (base_name.empty()) {
+            base_name = GetFilenameNoExtension(GetFilenameFromPath(filename));
+        }
+        if (base_name.empty()) {
+            base_name = filename;
+        }
+
+        ClipMetadata clip;
+        clip.uid = BuildStableClipUid(base_name, owner_id, static_cast<uint32_t>(i + 1));
+        clip.source_index = static_cast<int>(i);
+        clip.path = filename;
+        clip.base_name = base_name;
+        clip.owner_id = owner_id;
+        clip.duration_ms = 0;
+        clip.favourite = false;
+        clip.modded = false;
+        clip.corrupt = false;
+        harvested.push_back(std::move(clip));
+    }
+
+    if (harvested.empty()) {
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(g_clip_metadata_mutex);
+        for (const ClipMetadata& clip : harvested) {
+            ClipMetadata row = clip;
+            if (row.uid == 0) {
+                row.uid = BuildStableClipUid(row.base_name, row.owner_id, 1u);
+                if (row.uid == 0) {
+                    row.uid = 1;
+                }
+            }
+            g_clip_metadata_by_uid[row.uid] = std::move(row);
+        }
+    }
+
+    const std::wstring message =
+        L"[EVER2] Replay clip metadata fallback harvest: source='" + std::wstring(source_tag ? source_tag : L"unknown") +
+        L"' fileList=" + std::to_wstring(storage_ptr) +
+        L" count=" + std::to_wstring(count) +
+        L" captured=" + std::to_wstring(harvested.size());
+    ever::platform::LogDebug(message.c_str());
 }
 
 std::wstring FormatLastWriteTimestamp(uint64_t raw_time) {
@@ -691,6 +913,17 @@ bool BuildProjectsJsonFromSnapshot(const ReplaySnapshot& snapshot, std::string& 
     payload["status"] = "ready";
     payload["projects"] = Json::array();
 
+    std::vector<ClipMetadata> available_clips;
+    {
+        std::lock_guard<std::mutex> lock(g_clip_metadata_mutex);
+        available_clips.reserve(g_clip_metadata_by_uid.size());
+        for (const auto& [uid, clip] : g_clip_metadata_by_uid) {
+            ClipMetadata row = clip;
+            row.uid = uid;
+            available_clips.push_back(std::move(row));
+        }
+    }
+
     for (uint32_t i = 0; i < total; ++i) {
         const uint64_t entry_addr = snapshot.project_cache_base + (static_cast<uint64_t>(i) * snapshot.project_entry_size);
         const auto* entry = reinterpret_cast<const uint8_t*>(entry_addr);
@@ -765,22 +998,62 @@ bool BuildProjectsJsonFromSnapshot(const ReplaySnapshot& snapshot, std::string& 
         project["clipBaseNameCount"] = 0;
 
         Json clips = Json::array();
-        const size_t max_clip_rows = clip_uids.size();
+        size_t max_clip_rows = clip_uids.size();
+        if (max_clip_rows == 0 && clip_count16 > 0) {
+            // Fallback: still expose index-based clip slots even if UID extraction failed.
+            max_clip_rows = static_cast<size_t>(clip_count16);
+        }
         for (size_t clip_index = 0; clip_index < max_clip_rows; ++clip_index) {
             Json clip;
             clip["index"] = clip_index;
 
-            clip["baseName"] = "";
-            clip["path"] = "";
+            uint32_t uid = 0;
+            if (clip_index < clip_uids.size()) {
+                uid = clip_uids[clip_index];
+                clip["uid"] = uid;
+            }
+
+            std::string clip_base_name;
+            std::string clip_path;
+            uint32_t clip_duration_ms = 0;
+            bool clip_exists = false;
+            bool clip_favourite = false;
+            bool clip_modded = false;
+            bool clip_corrupt = false;
+            uint64_t clip_owner_id = 0;
+
+            if (uid != 0) {
+                std::lock_guard<std::mutex> lock(g_clip_metadata_mutex);
+                const auto found = g_clip_metadata_by_uid.find(uid);
+                if (found != g_clip_metadata_by_uid.end()) {
+                    clip_base_name = found->second.base_name;
+                    clip_path = found->second.path;
+                    clip_duration_ms = found->second.duration_ms;
+                    clip_owner_id = found->second.owner_id;
+                    clip_favourite = found->second.favourite;
+                    clip_modded = found->second.modded;
+                    clip_corrupt = found->second.corrupt;
+                    clip_exists = !clip_path.empty();
+                }
+            }
+
+            if (clip_base_name.empty()) {
+                clip_base_name = "Clip " + std::to_string(clip_index + 1);
+            }
+
+            clip["baseName"] = clip_base_name;
+            clip["path"] = clip_path;
             clip["diskPath"] = "";
-            clip["exists"] = false;
+            clip["exists"] = clip_exists;
+            clip["durationMs"] = clip_duration_ms;
+            clip["ownerId"] = clip_owner_id;
+            clip["ownerIdText"] = std::to_string(clip_owner_id);
+            clip["favourite"] = clip_favourite;
+            clip["modded"] = clip_modded;
+            clip["corrupt"] = clip_corrupt;
             clip["previewPath"] = "";
             clip["previewDiskPath"] = "";
             clip["previewExists"] = false;
-
-            if (clip_index < clip_uids.size()) {
-                clip["uid"] = clip_uids[clip_index];
-            }
 
             clips.push_back(std::move(clip));
         }
@@ -789,6 +1062,39 @@ bool BuildProjectsJsonFromSnapshot(const ReplaySnapshot& snapshot, std::string& 
         project["clipCount"] = project["clips"].size();
         payload["projects"].push_back(std::move(project));
     }
+
+    std::sort(
+        available_clips.begin(),
+        available_clips.end(),
+        [](const ClipMetadata& a, const ClipMetadata& b) {
+            if (a.base_name == b.base_name) {
+                return a.uid < b.uid;
+            }
+            return a.base_name < b.base_name;
+        });
+
+    Json available_clips_json = Json::array();
+    for (const ClipMetadata& clip : available_clips) {
+        Json row;
+        row["uid"] = clip.uid;
+        row["sourceIndex"] = clip.source_index;
+        row["baseName"] = clip.base_name;
+        row["path"] = clip.path;
+        row["exists"] = !clip.path.empty();
+        row["durationMs"] = clip.duration_ms;
+        row["ownerId"] = clip.owner_id;
+        row["ownerIdText"] = std::to_string(clip.owner_id);
+        row["favourite"] = clip.favourite;
+        row["modded"] = clip.modded;
+        row["corrupt"] = clip.corrupt;
+        available_clips_json.push_back(std::move(row));
+    }
+    payload["availableClips"] = std::move(available_clips_json);
+
+    const std::wstring available_message =
+        L"[EVER2] Replay clip metadata: availableClips payload count=" +
+        std::to_wstring(available_clips.size());
+    ever::platform::LogDebug(available_message.c_str());
 
     payload["projectCount"] = payload["projects"].size();
     out_json = payload.dump();
@@ -864,6 +1170,8 @@ uint64_t __fastcall HookedEnumerate(
 }
 
 uint32_t __fastcall HookedLoadMontage(void* this_ptr, void* replay_info, uint64_t* out_extended_result) {
+    ever::features::commands::PumpDeferredGameThreadCommands();
+
     thread_local bool reentrant = false;
     if (reentrant || g_load_montage_original == nullptr) {
         if (g_load_montage_original != nullptr) {
@@ -879,6 +1187,7 @@ uint32_t __fastcall HookedLoadMontage(void* this_ptr, void* replay_info, uint64_
     if (info_base != nullptr) {
         ReadObjectAt(info_base, kReplayInfoMontagePtrOffset, montage_ptr);
     }
+    g_last_loaded_montage_ptr.store(montage_ptr, std::memory_order_release);
     const std::string file_path = ReadReplayInfoString(info_base, kReplayInfoPathPtrOffset, kReplayInfoPathLenOffset);
     const std::string filename = ReadReplayInfoString(info_base, kReplayInfoFilenamePtrOffset, kReplayInfoFilenameLenOffset);
     const std::string project_name = !filename.empty() ? GetFilenameNoExtension(filename) : GetFilenameNoExtension(file_path);
@@ -934,6 +1243,8 @@ bool __fastcall HookedReplayFileManagerStartEnumerateProjectFiles(void* file_lis
 }
 
 bool __fastcall HookedReplayFileManagerCheckEnumerateProjectFiles(bool* result) {
+    ever::features::commands::PumpDeferredGameThreadCommands();
+
     if (g_replay_file_manager_check_enum_projects_original == nullptr) {
         return false;
     }
@@ -967,6 +1278,138 @@ bool __fastcall HookedReplayFileManagerCheckEnumerateProjectFiles(bool* result) 
     return completed;
 }
 
+bool __fastcall HookedReplayFileManagerStartEnumerateClipFiles(void* file_list, const char* filter) {
+    if (g_replay_file_manager_start_enum_clips_original == nullptr) {
+        return false;
+    }
+
+    const bool ok = g_replay_file_manager_start_enum_clips_original(file_list, filter);
+    g_last_enum_clips_file_list_ptr.store(reinterpret_cast<uintptr_t>(file_list), std::memory_order_release);
+    g_last_enumerate_clips_completed.store(false, std::memory_order_release);
+
+    if (ok) {
+        std::lock_guard<std::mutex> lock(g_clip_metadata_mutex);
+        g_clip_metadata_by_uid.clear();
+    }
+
+    const std::string filter_text = (filter != nullptr) ? filter : "";
+    const uint64_t hit_count = g_start_enum_clips_hook_hits.fetch_add(1, std::memory_order_relaxed) + 1;
+    const std::wstring message =
+        L"[EVER2] ReplayFileManager::StartEnumerateClipFiles hook: hits=" + std::to_wstring(hit_count) +
+        L" fileList=" + std::to_wstring(reinterpret_cast<uintptr_t>(file_list)) +
+        L" filter='" + ToWide(filter_text) + L"'" +
+        L" returned=" + std::to_wstring(ok ? 1 : 0);
+    ever::platform::LogDebug(message.c_str());
+    return ok;
+}
+
+bool __fastcall HookedReplayFileManagerCheckEnumerateClipFiles(bool* result) {
+    ever::features::commands::PumpDeferredGameThreadCommands();
+
+    if (g_replay_file_manager_check_enum_clips_original == nullptr) {
+        return false;
+    }
+
+    const bool completed = g_replay_file_manager_check_enum_clips_original(result);
+    const bool op_result = (result != nullptr) ? (*result) : false;
+
+    const uint64_t hit_count = g_check_enum_clips_hook_hits.fetch_add(1, std::memory_order_relaxed) + 1;
+    const bool session_active = g_enumerate_clips_session_active.load(std::memory_order_acquire);
+    if (session_active && completed) {
+        g_last_enumerate_clips_completed.store(true, std::memory_order_release);
+        g_last_enumerate_clips_result.store(op_result, std::memory_order_release);
+        if (op_result) {
+            CaptureClipMetadataFromFileDataStorage(
+                g_last_enum_clips_file_list_ptr.load(std::memory_order_acquire),
+                L"ReplayFileManager::CheckEnumerateClipFiles");
+        }
+    }
+
+    const int state = (completed ? 2 : 0) | (op_result ? 1 : 0);
+    const int previous_state = g_last_check_clips_logged_state.exchange(state, std::memory_order_acq_rel);
+    const bool state_changed = state != previous_state;
+    const bool should_log =
+        session_active ? (state_changed || hit_count == 1 || (hit_count % 200) == 0)
+                       : (hit_count == 1 || (hit_count % 1000) == 0);
+
+    if (should_log) {
+        const std::wstring message =
+            L"[EVER2] ReplayFileManager::CheckEnumerateClipFiles hook: hits=" + std::to_wstring(hit_count) +
+            L" sessionActive=" + std::to_wstring(session_active ? 1 : 0) +
+            L" completed=" + std::to_wstring(completed ? 1 : 0) +
+            L" result=" + std::to_wstring(op_result ? 1 : 0);
+        ever::platform::LogDebug(message.c_str());
+    }
+
+    return completed;
+}
+
+void __fastcall HookedClipDataInit(
+    void* this_ptr,
+    const char* filename,
+    const void* replay_header,
+    int version_op,
+    bool favourite,
+    bool modded_content,
+    bool is_corrupt) {
+    if (g_clip_data_init_original == nullptr) {
+        return;
+    }
+
+    g_clip_data_init_original(this_ptr, filename, replay_header, version_op, favourite, modded_content, is_corrupt);
+
+    if (this_ptr == nullptr) {
+        return;
+    }
+
+    const auto* clip_data = static_cast<const uint8_t*>(this_ptr);
+
+    uint32_t uid = 0;
+    uint32_t duration_ms = 0;
+    uint64_t owner_id = 0;
+    uint8_t cached_favourite = 0;
+    uint8_t cached_modded = 0;
+    uint8_t cached_corrupt = 0;
+    ReadObjectAt(clip_data, kClipDataUidOffset, uid);
+    ReadObjectAt(clip_data, kClipDataDurationOffset, duration_ms);
+    ReadObjectAt(clip_data, kClipDataOwnerIdOffset, owner_id);
+    ReadObjectAt(clip_data, kClipDataFavouriteOffset, cached_favourite);
+    ReadObjectAt(clip_data, kClipDataModdedOffset, cached_modded);
+    ReadObjectAt(clip_data, kClipDataCorruptOffset, cached_corrupt);
+
+    std::string path = ReadAsciiCStringAt(
+        reinterpret_cast<const char*>(clip_data + kClipDataPathOffset),
+        kClipDataPathMaxBytes);
+    const std::string base_name = GetFilenameNoExtension(GetFilenameFromPath(path));
+
+    if (uid != 0 && !base_name.empty()) {
+        ClipMetadata metadata;
+        metadata.uid = uid;
+        metadata.path = path;
+        metadata.base_name = base_name;
+        metadata.owner_id = owner_id;
+        metadata.duration_ms = duration_ms;
+        metadata.favourite = cached_favourite != 0;
+        metadata.modded = cached_modded != 0;
+        metadata.corrupt = cached_corrupt != 0;
+
+        {
+            std::lock_guard<std::mutex> lock(g_clip_metadata_mutex);
+            g_clip_metadata_by_uid[uid] = std::move(metadata);
+        }
+    }
+
+    const uint64_t hit_count = g_clip_data_init_hook_hits.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (hit_count == 1 || (hit_count % 128) == 0) {
+        const std::wstring message =
+            L"[EVER2] ClipData::Init hook: hits=" + std::to_wstring(hit_count) +
+            L" uid=" + std::to_wstring(uid) +
+            L" durationMs=" + std::to_wstring(duration_ms) +
+            L" path='" + ToWide(path) + L"'";
+        ever::platform::LogDebug(message.c_str());
+    }
+}
+
 void TryKickNativeProjectEnumeration() {
     if (g_replay_file_manager_start_enum_projects_original == nullptr ||
         g_replay_file_manager_check_enum_projects_original == nullptr) {
@@ -981,8 +1424,10 @@ void TryKickNativeProjectEnumeration() {
     BeginEnumerateSession();
 
     if (file_list_ptr == 0) {
+        g_project_enum_kick_storage = {};
+        file_list_ptr = reinterpret_cast<uintptr_t>(&g_project_enum_kick_storage);
         ever::platform::LogDebug(
-            L"[EVER2] Replay enumerate kick: no captured file list pointer; trying StartEnumerate with nullptr context.");
+            L"[EVER2] Replay enumerate kick: no captured file list pointer; using internal temporary FileDataStorage context.");
     }
 
     const bool started = g_replay_file_manager_start_enum_projects_original(
@@ -1018,6 +1463,82 @@ void TryKickNativeProjectEnumeration() {
 
     EndEnumerateSession();
     ever::platform::LogDebug(L"[EVER2] Replay enumerate kick: timed out waiting for completion.");
+}
+
+void TryKickNativeClipEnumeration() {
+    const bool has_internal_kick =
+        g_replay_mgr_internal_start_enum_clips_original != nullptr &&
+        g_replay_mgr_internal_check_enum_clips_original != nullptr;
+    const bool has_file_manager_kick =
+        g_replay_file_manager_start_enum_clips_original != nullptr &&
+        g_replay_file_manager_check_enum_clips_original != nullptr;
+
+    if (!has_internal_kick && !has_file_manager_kick) {
+        return;
+    }
+
+    uintptr_t file_list_ptr = g_last_enum_clips_file_list_ptr.load(std::memory_order_acquire);
+    if (file_list_ptr != 0 && !IsReadableAddressRange(reinterpret_cast<const void*>(file_list_ptr), sizeof(void*))) {
+        file_list_ptr = 0;
+    }
+
+    BeginEnumerateClipsSession();
+
+    if (file_list_ptr == 0) {
+        g_clip_enum_kick_storage = {};
+        file_list_ptr = reinterpret_cast<uintptr_t>(&g_clip_enum_kick_storage);
+        ever::platform::LogDebug(
+            L"[EVER2] Replay clip enumerate kick: no captured file list pointer; using internal temporary FileDataStorage context.");
+    }
+
+    bool started = false;
+    if (has_internal_kick) {
+        // Native flow goes through CReplayMgrInternal wrappers before FileManager.
+        started = g_replay_mgr_internal_start_enum_clips_original(
+            "",
+            reinterpret_cast<void*>(file_list_ptr),
+            "");
+    } else {
+        started = g_replay_file_manager_start_enum_clips_original(
+            reinterpret_cast<void*>(file_list_ptr),
+            ".clip");
+    }
+
+    const std::wstring start_message =
+        L"[EVER2] Replay clip enumerate kick: started=" + std::to_wstring(started ? 1 : 0) +
+        L" via=" + std::wstring(has_internal_kick ? L"CReplayMgrInternal" : L"ReplayFileManager") +
+        L" fileList=" + std::to_wstring(file_list_ptr);
+    ever::platform::LogDebug(start_message.c_str());
+
+    if (!started) {
+        EndEnumerateClipsSession();
+        return;
+    }
+
+    for (int i = 0; i < kEnumerateKickPollIterations; ++i) {
+        bool op_result = false;
+        const bool completed = has_internal_kick
+            ? g_replay_mgr_internal_check_enum_clips_original(&op_result)
+            : g_replay_file_manager_check_enum_clips_original(&op_result);
+
+        if (completed) {
+            g_last_enumerate_clips_completed.store(true, std::memory_order_release);
+            g_last_enumerate_clips_result.store(op_result, std::memory_order_release);
+            if (op_result) {
+                CaptureClipMetadataFromFileDataStorage(file_list_ptr, L"TryKickNativeClipEnumeration");
+            }
+            EndEnumerateClipsSession();
+            const std::wstring done_message =
+                L"[EVER2] Replay clip enumerate kick: completed result=" + std::to_wstring(op_result ? 1 : 0) +
+                L" polls=" + std::to_wstring(i + 1);
+            ever::platform::LogDebug(done_message.c_str());
+            return;
+        }
+        Sleep(kEnumerateKickPollSleepMs);
+    }
+
+    EndEnumerateClipsSession();
+    ever::platform::LogDebug(L"[EVER2] Replay clip enumerate kick: timed out waiting for completion.");
 }
 
 void InstallHookNoThrow() {
@@ -1143,6 +1664,143 @@ void InstallReplayFileManagerCheckEnumerateProjectFilesHookNoThrow() {
     ever::platform::LogDebug(message.c_str());
 }
 
+void InstallReplayFileManagerStartEnumerateClipFilesHookNoThrow() {
+    ever::hooking::PatternScanner scanner;
+    scanner.Initialize();
+
+    int matched_candidate = -1;
+    const uint64_t function_start = ResolvePatternToFunctionStart(
+        scanner,
+        ever::hooking::GameFunctionPatternId::ReplayFileManagerStartEnumerateClipFiles,
+        L"[EVER2] ReplayFileManager::StartEnumerateClipFiles",
+        &matched_candidate);
+    if (function_start == 0) {
+        return;
+    }
+
+    if (!InstallDetourForResolvedAddress(
+        function_start,
+        reinterpret_cast<void*>(&HookedReplayFileManagerStartEnumerateClipFiles),
+        &g_replay_file_manager_start_enum_clips_original,
+        g_replay_file_manager_start_enum_clips_detour,
+        L"[EVER2] ReplayFileManager::StartEnumerateClipFiles hook install failed. hr=")) {
+        return;
+    }
+
+    const std::wstring message =
+        L"[EVER2] ReplayFileManager::StartEnumerateClipFiles hook installed. candidateIndex=" +
+        std::to_wstring(matched_candidate) + L" functionStart=" + std::to_wstring(function_start);
+    ever::platform::LogDebug(message.c_str());
+}
+
+void InstallReplayFileManagerCheckEnumerateClipFilesHookNoThrow() {
+    ever::hooking::PatternScanner scanner;
+    scanner.Initialize();
+
+    int matched_candidate = -1;
+    const uint64_t function_start = ResolvePatternToFunctionStart(
+        scanner,
+        ever::hooking::GameFunctionPatternId::ReplayFileManagerCheckEnumerateClipFiles,
+        L"[EVER2] ReplayFileManager::CheckEnumerateClipFiles",
+        &matched_candidate,
+        1);
+    if (function_start == 0) {
+        return;
+    }
+
+    if (!InstallDetourForResolvedAddress(
+        function_start,
+        reinterpret_cast<void*>(&HookedReplayFileManagerCheckEnumerateClipFiles),
+        &g_replay_file_manager_check_enum_clips_original,
+        g_replay_file_manager_check_enum_clips_detour,
+        L"[EVER2] ReplayFileManager::CheckEnumerateClipFiles hook install failed. hr=")) {
+        return;
+    }
+
+    const std::wstring message =
+        L"[EVER2] ReplayFileManager::CheckEnumerateClipFiles hook installed. candidateIndex=" +
+        std::to_wstring(matched_candidate) + L" functionStart=" + std::to_wstring(function_start);
+    ever::platform::LogDebug(message.c_str());
+}
+
+void ResolveReplayMgrInternalStartEnumerateClipFilesNoThrow() {
+    ever::hooking::PatternScanner scanner;
+    scanner.Initialize();
+
+    int matched_candidate = -1;
+    const uint64_t function_start = ResolvePatternToAddress(
+        scanner,
+        ever::hooking::GameFunctionPatternId::ReplayMgrInternalStartEnumerateClipFiles,
+        L"[EVER2] CReplayMgrInternal::StartEnumerateClipFiles",
+        &matched_candidate,
+        1);
+    if (function_start == 0) {
+        return;
+    }
+
+    g_replay_mgr_internal_start_enum_clips_original =
+        reinterpret_cast<ReplayMgrInternalStartEnumerateClipFilesFn>(function_start);
+
+    const std::wstring message =
+        L"[EVER2] CReplayMgrInternal::StartEnumerateClipFiles resolved. candidateIndex=" +
+        std::to_wstring(matched_candidate) + L" functionStart=" + std::to_wstring(function_start);
+    ever::platform::LogDebug(message.c_str());
+}
+
+void ResolveReplayMgrInternalCheckEnumerateClipFilesNoThrow() {
+    ever::hooking::PatternScanner scanner;
+    scanner.Initialize();
+
+    int matched_candidate = -1;
+    const uint64_t function_start = ResolvePatternToAddress(
+        scanner,
+        ever::hooking::GameFunctionPatternId::ReplayMgrInternalCheckEnumerateClipFiles,
+        L"[EVER2] CReplayMgrInternal::CheckEnumerateClipFiles resolve",
+        &matched_candidate,
+        1);
+    if (function_start == 0) {
+        return;
+    }
+
+    g_replay_mgr_internal_check_enum_clips_original =
+        reinterpret_cast<ReplayMgrInternalCheckEnumerateClipFilesFn>(function_start);
+
+    const std::wstring message =
+        L"[EVER2] CReplayMgrInternal::CheckEnumerateClipFiles resolved. candidateIndex=" +
+        std::to_wstring(matched_candidate) + L" functionStart=" + std::to_wstring(function_start);
+    ever::platform::LogDebug(message.c_str());
+}
+
+void InstallClipDataInitHookNoThrow() {
+    ever::hooking::PatternScanner scanner;
+    scanner.Initialize();
+
+    int matched_candidate = -1;
+    const uint64_t function_start = ResolvePatternToFunctionStart(
+        scanner,
+        ever::hooking::GameFunctionPatternId::ReplayClipDataInit,
+        L"[EVER2] ClipData::Init",
+        &matched_candidate,
+        1);
+    if (function_start == 0) {
+        return;
+    }
+
+    if (!InstallDetourForResolvedAddress(
+        function_start,
+        reinterpret_cast<void*>(&HookedClipDataInit),
+        &g_clip_data_init_original,
+        g_clip_data_init_detour,
+        L"[EVER2] ClipData::Init hook install failed. hr=")) {
+        return;
+    }
+
+    const std::wstring message =
+        L"[EVER2] ClipData::Init hook installed. candidateIndex=" +
+        std::to_wstring(matched_candidate) + L" functionStart=" + std::to_wstring(function_start);
+    ever::platform::LogDebug(message.c_str());
+}
+
 }
 
 void EnsureHookInstalled() {
@@ -1184,6 +1842,21 @@ void EnsureHookInstalled() {
     }
     if (g_replay_file_manager_check_enum_projects_detour == nullptr) {
         InstallReplayFileManagerCheckEnumerateProjectFilesHookNoThrow();
+    }
+    if (g_replay_file_manager_start_enum_clips_detour == nullptr) {
+        InstallReplayFileManagerStartEnumerateClipFilesHookNoThrow();
+    }
+    if (g_replay_file_manager_check_enum_clips_detour == nullptr) {
+        InstallReplayFileManagerCheckEnumerateClipFilesHookNoThrow();
+    }
+    if (g_replay_mgr_internal_start_enum_clips_original == nullptr) {
+        ResolveReplayMgrInternalStartEnumerateClipFilesNoThrow();
+    }
+    if (g_replay_mgr_internal_check_enum_clips_original == nullptr) {
+        ResolveReplayMgrInternalCheckEnumerateClipFilesNoThrow();
+    }
+    if (g_clip_data_init_detour == nullptr) {
+        InstallClipDataInitHookNoThrow();
     }
 }
 
@@ -1237,6 +1910,15 @@ bool TryBuildProjectsJsonForUiTrigger(std::string& out_json, std::wstring& out_e
         TryKickNativeProjectEnumeration();
     }
 
+    bool needs_clip_kick = false;
+    {
+        std::lock_guard<std::mutex> lock(g_clip_metadata_mutex);
+        needs_clip_kick = g_clip_metadata_by_uid.empty();
+    }
+    if (needs_clip_kick) {
+        TryKickNativeClipEnumeration();
+    }
+
     if (!g_has_last_snapshot) {
         out_error =
             L"Replay snapshot is not ready yet. Open Rockstar Editor load flow once, then click Load project again.";
@@ -1250,6 +1932,10 @@ bool TryBuildProjectsJsonForUiTrigger(std::string& out_json, std::wstring& out_e
     }
 
     return BuildProjectsJsonFromSnapshot(g_last_snapshot, out_json, out_error);
+}
+
+uint64_t GetLastLoadedMontagePointer() {
+    return g_last_loaded_montage_ptr.load(std::memory_order_acquire);
 }
 
 }

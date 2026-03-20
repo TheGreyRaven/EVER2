@@ -92,6 +92,9 @@ std::mutex g_cef_shared_texture_mutex;
 HANDLE g_cef_shared_texture_handle = nullptr;
 bool g_cef_shared_texture_refresh_required = false;
 uint64_t g_cef_shared_texture_sequence = 0;
+HANDLE g_cef_shared_popup_texture_handle = nullptr;
+bool g_cef_shared_popup_texture_refresh_required = false;
+uint64_t g_cef_shared_popup_texture_sequence = 0;
 
 std::mutex g_root_script_queue_mutex;
 std::vector<std::string> g_root_script_queue;
@@ -138,6 +141,7 @@ void QueueCefMessageFromJs(const std::string& message) {
 
 std::mutex g_frame_mutex;
 FrameBuffer g_frame;
+PopupBuffer g_popup;
 
 bool TryExecuteRootScriptNow(const std::string& script) {
 #if defined(_WIN64) && EVER_NATIVE_ENABLE_CEF
@@ -276,12 +280,20 @@ ComPtr<ID3D11RasterizerState> g_rasterizer_state;
 
 ComPtr<ID3D11Texture2D> g_overlay_texture;
 ComPtr<ID3D11ShaderResourceView> g_overlay_srv;
+ComPtr<ID3D11Texture2D> g_overlay_popup_texture;
+ComPtr<ID3D11ShaderResourceView> g_overlay_popup_srv;
 int g_overlay_texture_width = 0;
 int g_overlay_texture_height = 0;
+int g_overlay_popup_texture_width = 0;
+int g_overlay_popup_texture_height = 0;
 uint64_t g_uploaded_sequence = 0;
+uint64_t g_uploaded_popup_sequence = 0;
+uint64_t g_uploaded_popup_cpu_sequence = 0;
 std::atomic<uint64_t> g_draw_overlay_missing_prereq{0};
 HANDLE g_opened_shared_texture_handle = nullptr;
+HANDLE g_opened_shared_popup_texture_handle = nullptr;
 std::atomic<bool> g_overlay_texture_from_shared_handle{false};
+std::atomic<bool> g_overlay_popup_texture_from_shared_handle{false};
 
 void SaveState(D3D11StateBackup* state) {
     if (state == nullptr || g_context == nullptr) {
@@ -325,13 +337,21 @@ void RestoreState(const D3D11StateBackup& state) {
 }
 
 void ResetD3DResources() {
+    g_overlay_popup_srv.Reset();
+    g_overlay_popup_texture.Reset();
     g_overlay_srv.Reset();
     g_overlay_texture.Reset();
     g_overlay_texture_width = 0;
     g_overlay_texture_height = 0;
+    g_overlay_popup_texture_width = 0;
+    g_overlay_popup_texture_height = 0;
     g_uploaded_sequence = 0;
+    g_uploaded_popup_sequence = 0;
+    g_uploaded_popup_cpu_sequence = 0;
     g_opened_shared_texture_handle = nullptr;
+    g_opened_shared_popup_texture_handle = nullptr;
     g_overlay_texture_from_shared_handle.store(false, std::memory_order_release);
+    g_overlay_popup_texture_from_shared_handle.store(false, std::memory_order_release);
     g_vertex_buffer_flipped.Reset();
     g_vertex_buffer.Reset();
     g_input_layout.Reset();
@@ -534,6 +554,7 @@ bool InitializeNativeOverlayRenderer() {
 
     std::lock_guard<std::mutex> lock(g_frame_mutex);
     g_frame = {};
+    g_popup = {};
 
     if (!InitializeCefInProcess()) {
         Log(L"[EVER2] Native overlay renderer disabled because in-process CEF initialization failed.");
@@ -612,7 +633,9 @@ void TickNativeOverlayRenderer() {
     }
 
     FlushQueuedRootScripts();
-    PumpPolledMouseButtonsToCef();
+    if (!::ever::platform::IsFiveMHostProcess()) {
+        PumpPolledMouseButtonsToCef();
+    }
 
     if (tick_call == 1 || (tick_call % 1200) == 0) {
         wchar_t msg[220] = {};
@@ -769,6 +792,7 @@ void ShutdownNativeOverlayRenderer() {
 
     std::lock_guard<std::mutex> lock(g_frame_mutex);
     g_frame = {};
+    g_popup = {};
     Log(L"[EVER2] ShutdownNativeOverlayRenderer complete.");
 }
 

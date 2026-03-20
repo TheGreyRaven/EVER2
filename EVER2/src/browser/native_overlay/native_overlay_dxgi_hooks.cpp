@@ -156,15 +156,15 @@ HRESULT STDMETHODCALLTYPE HookedSwapChainPresent(IDXGISwapChain* swap_chain, UIN
         ::ever::browser::OnPresentNativeOverlayFromInternalHook(swap_chain);
     }
 
-    if (calls == 1 || (calls % 1200) == 0) {
-        wchar_t message[220] = {};
-        swprintf_s(message,
-                   L"[EVER2] Internal DXGI Present hook activity: calls=%llu flags=0x%08X swapChain=%s",
-                   static_cast<unsigned long long>(calls),
-                   static_cast<unsigned int>(flags),
-                   PtrToString(swap_chain).c_str());
-        Log(message);
-    }
+    // if (calls == 1 || (calls % 1200) == 0) {
+    //     wchar_t message[220] = {};
+    //     swprintf_s(message,
+    //                L"[EVER2] Internal DXGI Present hook activity: calls=%llu flags=0x%08X swapChain=%s",
+    //                static_cast<unsigned long long>(calls),
+    //                static_cast<unsigned int>(flags),
+    //                PtrToString(swap_chain).c_str());
+    //     Log(message);
+    // }
 
     if (g_original_swapchain_present == nullptr) {
         return E_FAIL;
@@ -429,14 +429,14 @@ void HandleOverlayPresentForSource(void* swap_chain_ptr, OverlayPresentSource so
         return;
     }
 
-    if (present_call == 1 || (present_call % 600) == 0) {
-        const wchar_t* source_name = source == OverlayPresentSource::InternalDxgiHook ? L"internalDxgi" : L"scriptHook";
-        const std::wstring message = L"[EVER2] Present callback active. count=" +
-            std::to_wstring(present_call) +
-            L" source=" + source_name +
-            L" swapChain=" + PtrToString(swap_chain_ptr);
-        Log(message.c_str());
-    }
+    // if (present_call == 1 || (present_call % 600) == 0) {
+    //     const wchar_t* source_name = source == OverlayPresentSource::InternalDxgiHook ? L"internalDxgi" : L"scriptHook";
+    //     const std::wstring message = L"[EVER2] Present callback active. count=" +
+    //         std::to_wstring(present_call) +
+    //         L" source=" + source_name +
+    //         L" swapChain=" + PtrToString(swap_chain_ptr);
+    //     Log(message.c_str());
+    // }
 
     auto* swap_chain = reinterpret_cast<IDXGISwapChain*>(swap_chain_ptr);
     if (!g_dxgi_hook_installed.load(std::memory_order_acquire)) {
@@ -501,11 +501,11 @@ void HandleOverlayPresentForSource(void* swap_chain_ptr, OverlayPresentSource so
     }
 
     const uint64_t draw_count = g_present_draw_success.fetch_add(1, std::memory_order_relaxed) + 1;
-    if (draw_count == 1 || (draw_count % 600) == 0) {
-        wchar_t message[220] = {};
-        swprintf_s(message, L"[EVER2] Present draw success count=%llu.", static_cast<unsigned long long>(draw_count));
-        Log(message);
-    }
+    // if (draw_count == 1 || (draw_count % 600) == 0) {
+    //     wchar_t message[220] = {};
+    //     swprintf_s(message, L"[EVER2] Present draw success count=%llu.", static_cast<unsigned long long>(draw_count));
+    //     Log(message);
+    // }
 
     const int next_width = g_target_width.load(std::memory_order_relaxed);
     const int next_height = g_target_height.load(std::memory_order_relaxed);

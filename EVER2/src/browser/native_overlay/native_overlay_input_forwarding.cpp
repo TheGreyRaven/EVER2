@@ -105,6 +105,16 @@ CefMouseEvent BuildCefMouseEvent(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
     return event;
 }
 
+void EnsureCefBrowserFocused(CefRefPtr<CefBrowserHost> host) {
+    if (host == nullptr) {
+        return;
+    }
+
+    if (!g_cef_browser_focused.exchange(true, std::memory_order_acq_rel)) {
+        host->SetFocus(true);
+    }
+}
+
 }
 
 bool IsMouseMessageForRouting(UINT msg) {
@@ -158,6 +168,8 @@ bool ForwardMouseMessageToCef(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         return false;
     }
 
+    EnsureCefBrowserFocused(host);
+
     if (msg == WM_MOUSEMOVE && !g_cef_tracking_mouse_leave.exchange(true, std::memory_order_acq_rel)) {
         TRACKMOUSEEVENT track = {};
         track.cbSize = sizeof(track);
@@ -178,11 +190,19 @@ bool ForwardMouseMessageToCef(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         host->SendMouseMoveEvent(event, true);
         return true;
     case WM_MOUSEWHEEL:
-        host->SendMouseWheelEvent(event, 0, GET_WHEEL_DELTA_WPARAM(wparam));
+    case WM_MOUSEHWHEEL: {
+        MSG native_message = {};
+        native_message.hwnd = hwnd;
+        native_message.message = msg;
+        native_message.wParam = wparam;
+        native_message.lParam = lparam;
+        native_message.time = static_cast<DWORD>(GetMessageTime());
+        native_message.pt.x = GET_X_LPARAM(lparam);
+        native_message.pt.y = GET_Y_LPARAM(lparam);
+
+        host->SendMouseWheelEventNative(&native_message);
         return true;
-    case WM_MOUSEHWHEEL:
-        host->SendMouseWheelEvent(event, GET_WHEEL_DELTA_WPARAM(wparam), 0);
-        return true;
+    }
     case WM_LBUTTONDOWN:
         host->SendMouseClickEvent(event, MBT_LEFT, false, 1);
         return true;
@@ -225,6 +245,8 @@ bool ForwardKeyboardMessageToCef(UINT msg, WPARAM wparam, LPARAM lparam) {
     if (host == nullptr) {
         return false;
     }
+
+    EnsureCefBrowserFocused(host);
 
     CefKeyEvent event;
     event.windows_key_code = static_cast<int>(wparam);
@@ -292,6 +314,8 @@ void PumpPolledMouseButtonsToCef() {
         previous_middle_down = current_middle_down;
         return;
     }
+
+    EnsureCefBrowserFocused(host);
 
     HWND hwnd = nullptr;
     {

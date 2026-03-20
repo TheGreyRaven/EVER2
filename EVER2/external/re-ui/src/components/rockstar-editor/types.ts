@@ -19,12 +19,32 @@ export type ProjectClipData = {
   diskPath?: string
   exists?: boolean
   uid?: number
+  ownerId?: number
+  ownerIdText?: string
+  durationMs?: number
+  favourite?: boolean
+  modded?: boolean
+  corrupt?: boolean
   /** replay:/ URI of the clip thumbnail JPG */
   previewPath?: string
   /** Resolved disk path of the clip thumbnail JPG */
   previewDiskPath?: string
   /** Whether the thumbnail file exists on disk */
   previewExists?: boolean
+}
+
+export type AvailableClipData = {
+  uid: number
+  sourceIndex?: number
+  baseName?: string
+  path?: string
+  exists?: boolean
+  ownerId?: number
+  ownerIdText?: string
+  durationMs?: number
+  favourite?: boolean
+  modded?: boolean
+  corrupt?: boolean
 }
 
 export type ReplayProjectData = {
@@ -55,6 +75,7 @@ export type ReplayProjectsPayload = {
   status: "ready"
   requestId?: string
   projectCount: number
+  availableClips?: AvailableClipData[]
   projects: ReplayProjectData[]
 }
 

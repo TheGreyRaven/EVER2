@@ -43,6 +43,16 @@ struct FrameBuffer {
     std::vector<uint8_t> pixels;
 };
 
+struct PopupBuffer {
+    bool visible = false;
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+    uint64_t sequence = 0;
+    std::vector<uint8_t> pixels;
+};
+
 extern std::atomic<bool> g_initialized;
 extern std::atomic<bool> g_cef_initialized;
 extern std::atomic<bool> g_browser_ready;
@@ -101,6 +111,7 @@ extern std::atomic<uint64_t> g_input_keyboard_consumed_cef;
 extern std::atomic<uint64_t> g_input_keyboard_passthrough;
 extern std::atomic<bool> g_cef_interactions_enabled;
 extern std::atomic<bool> g_cef_keyboard_interactions_enabled;
+extern std::atomic<bool> g_cef_browser_focused;
 extern std::atomic<ULONGLONG> g_last_cef_input_activity_tick;
 extern std::mutex g_input_hook_mutex;
 extern HWND g_input_hook_window;
@@ -110,9 +121,13 @@ extern std::mutex g_cef_shared_texture_mutex;
 extern HANDLE g_cef_shared_texture_handle;
 extern bool g_cef_shared_texture_refresh_required;
 extern uint64_t g_cef_shared_texture_sequence;
+extern HANDLE g_cef_shared_popup_texture_handle;
+extern bool g_cef_shared_popup_texture_refresh_required;
+extern uint64_t g_cef_shared_popup_texture_sequence;
 
 extern std::mutex g_frame_mutex;
 extern FrameBuffer g_frame;
+extern PopupBuffer g_popup;
 
 extern std::mutex g_root_script_queue_mutex;
 extern std::vector<std::string> g_root_script_queue;
@@ -142,12 +157,20 @@ extern ComPtr<ID3D11RasterizerState> g_rasterizer_state;
 
 extern ComPtr<ID3D11Texture2D> g_overlay_texture;
 extern ComPtr<ID3D11ShaderResourceView> g_overlay_srv;
+extern ComPtr<ID3D11Texture2D> g_overlay_popup_texture;
+extern ComPtr<ID3D11ShaderResourceView> g_overlay_popup_srv;
 extern int g_overlay_texture_width;
 extern int g_overlay_texture_height;
+extern int g_overlay_popup_texture_width;
+extern int g_overlay_popup_texture_height;
 extern uint64_t g_uploaded_sequence;
+extern uint64_t g_uploaded_popup_sequence;
+extern uint64_t g_uploaded_popup_cpu_sequence;
 extern std::atomic<uint64_t> g_draw_overlay_missing_prereq;
 extern HANDLE g_opened_shared_texture_handle;
+extern HANDLE g_opened_shared_popup_texture_handle;
 extern std::atomic<bool> g_overlay_texture_from_shared_handle;
+extern std::atomic<bool> g_overlay_popup_texture_from_shared_handle;
 
 struct OverlayVertex {
     float position[4];

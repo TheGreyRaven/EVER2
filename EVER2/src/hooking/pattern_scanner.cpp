@@ -2,7 +2,7 @@
 
 #include "ever/platform/debug_console.h"
 
-#include <polyhook2/Misc.hpp>
+#include <vector>
 
 namespace {
 
@@ -30,15 +30,85 @@ uint64_t FindPatternSafe(uint64_t module_base, size_t module_size, const char* p
         *out_exception_code = 0;
     }
 
-    __try {
-        return PLH::findPattern(module_base, module_size, pattern);
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {
+    if (module_base == 0 || module_size == 0 || pattern == nullptr || pattern[0] == '\0') {
         if (out_exception_code != nullptr) {
-            *out_exception_code = GetExceptionCode();
+            *out_exception_code = ERROR_INVALID_PARAMETER;
         }
         return 0;
     }
+
+    std::vector<int> bytes;
+    bytes.reserve(64);
+
+    const char* p = pattern;
+    while (*p != '\0') {
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') {
+            ++p;
+        }
+        if (*p == '\0') {
+            break;
+        }
+
+        if (*p == '?') {
+            ++p;
+            if (*p == '?') {
+                ++p;
+            }
+            bytes.push_back(-1);
+            continue;
+        }
+
+        auto hex_to_nibble = [](char c) -> int {
+            if (c >= '0' && c <= '9') {
+                return c - '0';
+            }
+            if (c >= 'a' && c <= 'f') {
+                return 10 + (c - 'a');
+            }
+            if (c >= 'A' && c <= 'F') {
+                return 10 + (c - 'A');
+            }
+            return -1;
+        };
+
+        const int hi = hex_to_nibble(*p++);
+        if (hi < 0 || *p == '\0') {
+            if (out_exception_code != nullptr) {
+                *out_exception_code = ERROR_BAD_FORMAT;
+            }
+            return 0;
+        }
+        const int lo = hex_to_nibble(*p++);
+        if (lo < 0) {
+            if (out_exception_code != nullptr) {
+                *out_exception_code = ERROR_BAD_FORMAT;
+            }
+            return 0;
+        }
+        bytes.push_back((hi << 4) | lo);
+    }
+
+    if (bytes.empty() || bytes.size() > module_size) {
+        return 0;
+    }
+
+    const auto* data = reinterpret_cast<const uint8_t*>(module_base);
+    const size_t last = module_size - bytes.size();
+    for (size_t i = 0; i <= last; ++i) {
+        bool match = true;
+        for (size_t j = 0; j < bytes.size(); ++j) {
+            const int expected = bytes[j];
+            if (expected >= 0 && data[i + j] != static_cast<uint8_t>(expected)) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            return module_base + i;
+        }
+    }
+
+    return 0;
 }
 
 bool ResolveExecutableSectionRange(

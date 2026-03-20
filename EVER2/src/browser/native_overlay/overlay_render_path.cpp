@@ -1,6 +1,7 @@
 #include "ever/browser/native_overlay_renderer_internal.h"
 
 #include <algorithm>
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -92,6 +93,56 @@ bool EnsureOverlayTexture(int width, int height) {
     return true;
 }
 
+bool EnsureOverlayPopupTexture(int width, int height) {
+    if (g_device == nullptr || width <= 0 || height <= 0) {
+        return false;
+    }
+
+    if (g_overlay_popup_texture != nullptr && width == g_overlay_popup_texture_width &&
+        height == g_overlay_popup_texture_height) {
+        return true;
+    }
+
+    g_overlay_popup_srv.Reset();
+    g_overlay_popup_texture.Reset();
+    g_overlay_popup_texture_width = 0;
+    g_overlay_popup_texture_height = 0;
+
+    D3D11_TEXTURE2D_DESC tex_desc = {};
+    tex_desc.Width = static_cast<UINT>(width);
+    tex_desc.Height = static_cast<UINT>(height);
+    tex_desc.MipLevels = 1;
+    tex_desc.ArraySize = 1;
+    tex_desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    tex_desc.SampleDesc.Count = 1;
+    tex_desc.Usage = D3D11_USAGE_DEFAULT;
+    tex_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    HRESULT hr = g_device->CreateTexture2D(&tex_desc, nullptr, g_overlay_popup_texture.GetAddressOf());
+    if (FAILED(hr)) {
+        const std::wstring message = L"[EVER2] CreateTexture2D(popup overlay) failed. hr=" + HrToString(hr);
+        Log(message.c_str());
+        return false;
+    }
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+    srv_desc.Format = tex_desc.Format;
+    srv_desc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srv_desc.Texture2D.MipLevels = 1;
+
+    hr = g_device->CreateShaderResourceView(g_overlay_popup_texture.Get(), &srv_desc, g_overlay_popup_srv.GetAddressOf());
+    if (FAILED(hr)) {
+        const std::wstring message = L"[EVER2] CreateShaderResourceView(popup overlay) failed. hr=" + HrToString(hr);
+        Log(message.c_str());
+        g_overlay_popup_texture.Reset();
+        return false;
+    }
+
+    g_overlay_popup_texture_width = width;
+    g_overlay_popup_texture_height = height;
+    return true;
+}
+
 void UpdateTargetSizeFromSwapChain(IDXGISwapChain* swap_chain) {
     if (swap_chain == nullptr) {
         return;
@@ -126,11 +177,32 @@ bool UploadLatestFrame() {
         HANDLE shared_handle = nullptr;
         bool refresh_required = false;
         uint64_t shared_sequence = 0;
+        HANDLE popup_shared_handle = nullptr;
+        bool popup_refresh_required = false;
+        uint64_t popup_shared_sequence = 0;
+        bool popup_visible = false;
+        int popup_width = 0;
+        int popup_height = 0;
+        uint64_t popup_cpu_sequence = 0;
+        std::vector<uint8_t> popup_cpu_pixels;
         {
             std::lock_guard<std::mutex> lock(g_cef_shared_texture_mutex);
             shared_handle = g_cef_shared_texture_handle;
             refresh_required = g_cef_shared_texture_refresh_required;
             shared_sequence = g_cef_shared_texture_sequence;
+            popup_shared_handle = g_cef_shared_popup_texture_handle;
+            popup_refresh_required = g_cef_shared_popup_texture_refresh_required;
+            popup_shared_sequence = g_cef_shared_popup_texture_sequence;
+        }
+        {
+            std::lock_guard<std::mutex> lock(g_frame_mutex);
+            popup_visible = g_popup.visible;
+            popup_width = g_popup.width;
+            popup_height = g_popup.height;
+            if (popup_visible && popup_width > 0 && popup_height > 0 && !g_popup.pixels.empty()) {
+                popup_cpu_sequence = g_popup.sequence;
+                popup_cpu_pixels = g_popup.pixels;
+            }
         }
 
         if (shared_handle != nullptr) {
@@ -166,7 +238,6 @@ bool UploadLatestFrame() {
                             std::lock_guard<std::mutex> lock(g_cef_shared_texture_mutex);
                             g_cef_shared_texture_refresh_required = false;
                         }
-                        return true;
                     }
 
                     if (!g_cef_shared_texture_failed.exchange(true, std::memory_order_acq_rel)) {
@@ -182,11 +253,75 @@ bool UploadLatestFrame() {
                     Log(message.c_str());
                 }
             } else {
-                return true;
+                // Main shared view texture is up to date.
             }
         }
 
-        return false;
+        if (popup_visible && popup_shared_handle != nullptr && popup_width > 0 && popup_height > 0) {
+            const bool needs_popup_reopen =
+                popup_refresh_required ||
+                g_overlay_popup_srv == nullptr ||
+                g_overlay_popup_texture == nullptr ||
+                g_opened_shared_popup_texture_handle != popup_shared_handle ||
+                g_uploaded_popup_sequence != popup_shared_sequence;
+
+            if (needs_popup_reopen) {
+                ComPtr<ID3D11Texture2D> popup_texture;
+                const HRESULT popup_hr = g_device->OpenSharedResource(
+                    popup_shared_handle,
+                    __uuidof(ID3D11Texture2D),
+                    reinterpret_cast<void**>(popup_texture.GetAddressOf()));
+                if (SUCCEEDED(popup_hr) && popup_texture != nullptr) {
+                    ComPtr<ID3D11ShaderResourceView> popup_srv;
+                    const HRESULT popup_srv_hr =
+                        g_device->CreateShaderResourceView(popup_texture.Get(), nullptr, popup_srv.GetAddressOf());
+                    if (SUCCEEDED(popup_srv_hr) && popup_srv != nullptr) {
+                        g_overlay_popup_texture = popup_texture;
+                        g_overlay_popup_srv = popup_srv;
+                        D3D11_TEXTURE2D_DESC popup_desc = {};
+                        popup_texture->GetDesc(&popup_desc);
+                        g_overlay_popup_texture_width = static_cast<int>(popup_desc.Width);
+                        g_overlay_popup_texture_height = static_cast<int>(popup_desc.Height);
+                        g_opened_shared_popup_texture_handle = popup_shared_handle;
+                        g_uploaded_popup_sequence = popup_shared_sequence;
+                        g_overlay_popup_texture_from_shared_handle.store(true, std::memory_order_release);
+                        std::lock_guard<std::mutex> lock(g_cef_shared_texture_mutex);
+                        g_cef_shared_popup_texture_refresh_required = false;
+                    }
+                }
+            }
+        } else if (popup_visible && popup_width > 0 && popup_height > 0 && !popup_cpu_pixels.empty()) {
+            const bool needs_popup_upload =
+                g_overlay_popup_srv == nullptr ||
+                g_overlay_popup_texture == nullptr ||
+                g_overlay_popup_texture_from_shared_handle.load(std::memory_order_acquire) ||
+                popup_width != g_overlay_popup_texture_width ||
+                popup_height != g_overlay_popup_texture_height ||
+                popup_cpu_sequence != g_uploaded_popup_cpu_sequence;
+
+            if (needs_popup_upload && EnsureOverlayPopupTexture(popup_width, popup_height)) {
+                g_context->UpdateSubresource(
+                    g_overlay_popup_texture.Get(),
+                    0,
+                    nullptr,
+                    popup_cpu_pixels.data(),
+                    static_cast<UINT>(popup_width * 4),
+                    0);
+                g_uploaded_popup_cpu_sequence = popup_cpu_sequence;
+                g_overlay_popup_texture_from_shared_handle.store(false, std::memory_order_release);
+            }
+        } else {
+            g_overlay_popup_srv.Reset();
+            g_overlay_popup_texture.Reset();
+            g_overlay_popup_texture_width = 0;
+            g_overlay_popup_texture_height = 0;
+            g_opened_shared_popup_texture_handle = nullptr;
+            g_uploaded_popup_sequence = 0;
+            g_uploaded_popup_cpu_sequence = 0;
+            g_overlay_popup_texture_from_shared_handle.store(false, std::memory_order_release);
+        }
+
+        return g_overlay_srv != nullptr;
     }
 
     int width = 0;
@@ -375,6 +510,52 @@ bool DrawOverlay(IDXGISwapChain* swap_chain) {
     g_context->PSSetSamplers(0, 1, g_sampler.GetAddressOf());
     g_context->PSSetShaderResources(0, 1, &shader_resource);
     g_context->Draw(4, 0);
+
+    bool popup_visible = false;
+    int popup_x = 0;
+    int popup_y = 0;
+    int popup_w = 0;
+    int popup_h = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_frame_mutex);
+        popup_visible = g_popup.visible;
+        popup_x = g_popup.x;
+        popup_y = g_popup.y;
+        popup_w = g_popup.width;
+        popup_h = g_popup.height;
+    }
+
+    if (popup_visible && g_overlay_popup_srv != nullptr && popup_w > 0 && popup_h > 0) {
+        const int clipped_x = (std::max)(0, popup_x);
+        const int clipped_y = (std::max)(0, popup_y);
+        const int clipped_right = (std::min)(static_cast<int>(bb_desc.Width), popup_x + popup_w);
+        const int clipped_bottom = (std::min)(static_cast<int>(bb_desc.Height), popup_y + popup_h);
+        const int clipped_w = clipped_right - clipped_x;
+        const int clipped_h = clipped_bottom - clipped_y;
+
+        if (clipped_w > 0 && clipped_h > 0) {
+            D3D11_VIEWPORT popup_viewport = {};
+            popup_viewport.TopLeftX = static_cast<float>(clipped_x);
+            popup_viewport.TopLeftY = static_cast<float>(clipped_y);
+            popup_viewport.Width = static_cast<float>(clipped_w);
+            popup_viewport.Height = static_cast<float>(clipped_h);
+            popup_viewport.MinDepth = 0.0f;
+            popup_viewport.MaxDepth = 1.0f;
+
+            ID3D11Buffer* popup_vertex_buffer =
+                g_overlay_popup_texture_from_shared_handle.load(std::memory_order_acquire)
+                    ? g_vertex_buffer_flipped.Get()
+                    : g_vertex_buffer.Get();
+
+            ID3D11ShaderResourceView* popup_shader_resource = g_overlay_popup_srv.Get();
+            g_context->RSSetViewports(1, &popup_viewport);
+            g_context->IASetVertexBuffers(0, 1, &popup_vertex_buffer, &stride, &offset);
+            g_context->PSSetShaderResources(0, 1, &popup_shader_resource);
+            g_context->Draw(4, 0);
+            g_context->RSSetViewports(1, &viewport);
+        }
+    }
+
     g_context->PSSetShaderResources(0, 1, &null_resource);
 
     RestoreState(backup);
