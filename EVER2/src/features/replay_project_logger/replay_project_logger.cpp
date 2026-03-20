@@ -5,6 +5,7 @@
 #include "ever/hooking/pattern_scanner.h"
 #include "ever/hooking/x64_detour.h"
 #include "ever/platform/debug_console.h"
+#include "ever/utils/replay_clip_utils.h"
 
 #include <nlohmann/json.hpp>
 
@@ -989,13 +990,36 @@ bool BuildProjectsJsonFromSnapshot(const ReplaySnapshot& snapshot, std::string& 
         project["lastWriteRaw"] = last_write;
         project["lastWriteLocal"] = last_write_local;
         project["markDelete"] = (mark_delete != 0);
-        project["previewCandidate"] = "";
-        project["previewDiskPath"] = "";
-        project["previewExists"] = false;
         project["clipArrayPtr"] = clip_array_ptr;
         project["clipCount16"] = clip_count16;
         project["clipCap16"] = clip_capacity16;
         project["clipBaseNameCount"] = 0;
+
+        const std::string clips_disk_dir = ever::utils::replay_clip::ReplayUriToDiskPath("replay:/videos/clips/");
+        const std::vector<std::string> vid_clip_stems =
+            ever::utils::replay_clip::ExtractProjectClipBaseNames(path_guess);
+
+        std::string project_preview_candidate;
+        std::string project_preview_disk_path;
+        bool project_preview_exists = false;
+        for (const std::string& stem : vid_clip_stems) {
+            if (stem.empty()) { continue; }
+            const std::string jpg = clips_disk_dir + stem + ".jpg";
+            if (ever::utils::replay_clip::FileExists(jpg)) {
+                project_preview_candidate = stem;
+                project_preview_disk_path = jpg;
+                project_preview_exists = true;
+                break;
+            }
+        }
+
+        if (i == 0) {
+            const std::wstring vid_scan_msg =
+                L"[EVER2][VidScan] proj=0 path='" + std::wstring(path_guess.begin(), path_guess.end()) +
+                L"' vidStems=" + std::to_wstring(vid_clip_stems.size()) +
+                L" projPreviewExists=" + std::to_wstring(project_preview_exists ? 1 : 0);
+            ever::platform::LogDebug(vid_scan_msg.c_str());
+        }
 
         Json clips = Json::array();
         size_t max_clip_rows = clip_uids.size();
@@ -1043,7 +1067,36 @@ bool BuildProjectsJsonFromSnapshot(const ReplaySnapshot& snapshot, std::string& 
 
             clip["baseName"] = clip_base_name;
             clip["path"] = clip_path;
-            clip["diskPath"] = "";
+
+            std::string clip_file_noext = GetFilenameNoExtension(GetFilenameFromPath(clip_path));
+            const bool vid_fallback = clip_file_noext.empty() && clip_index < vid_clip_stems.size();
+            if (vid_fallback) {
+                clip_file_noext = vid_clip_stems[clip_index];
+            }
+            const std::string clip_disk_path = clip_file_noext.empty()
+                ? std::string()
+                : clips_disk_dir + clip_file_noext + ".clip";
+            const std::string clip_preview_disk_path = clip_file_noext.empty()
+                ? std::string()
+                : clips_disk_dir + clip_file_noext + ".jpg";
+            const std::string clip_preview_replay_path = clip_file_noext.empty()
+                ? std::string()
+                : std::string("replay:/videos/clips/") + clip_file_noext + ".jpg";
+            const bool clip_preview_exists = ever::utils::replay_clip::FileExists(clip_preview_disk_path);
+
+            if (i == 0 && clip_index < 3) {
+                const std::wstring thumb_probe =
+                    L"[EVER2][ThumbProbe] proj=0 clip=" + std::to_wstring(clip_index) +
+                    L" uid=" + std::to_wstring(uid) +
+                    L" rawPath='" + std::wstring(clip_path.begin(), clip_path.end()) +
+                    L"' stem='" + std::wstring(clip_file_noext.begin(), clip_file_noext.end()) +
+                    L"' vidFallback=" + std::to_wstring(vid_fallback ? 1 : 0) +
+                    L" previewDisk='" + std::wstring(clip_preview_disk_path.begin(), clip_preview_disk_path.end()) +
+                    L"' exists=" + std::to_wstring(clip_preview_exists ? 1 : 0);
+                ever::platform::LogDebug(thumb_probe.c_str());
+            }
+
+            clip["diskPath"] = clip_disk_path;
             clip["exists"] = clip_exists;
             clip["durationMs"] = clip_duration_ms;
             clip["ownerId"] = clip_owner_id;
@@ -1051,13 +1104,22 @@ bool BuildProjectsJsonFromSnapshot(const ReplaySnapshot& snapshot, std::string& 
             clip["favourite"] = clip_favourite;
             clip["modded"] = clip_modded;
             clip["corrupt"] = clip_corrupt;
-            clip["previewPath"] = "";
-            clip["previewDiskPath"] = "";
-            clip["previewExists"] = false;
+            clip["previewPath"] = clip_preview_replay_path;
+            clip["previewDiskPath"] = clip_preview_disk_path;
+            clip["previewExists"] = clip_preview_exists;
+
+            if (clip_index == 0 && clip_preview_exists && !project_preview_exists) {
+                project_preview_candidate = clip_base_name;
+                project_preview_disk_path = clip_preview_disk_path;
+                project_preview_exists = true;
+            }
 
             clips.push_back(std::move(clip));
         }
 
+        project["previewCandidate"] = project_preview_candidate;
+        project["previewDiskPath"] = project_preview_disk_path;
+        project["previewExists"] = project_preview_exists;
         project["clips"] = std::move(clips);
         project["clipCount"] = project["clips"].size();
         payload["projects"].push_back(std::move(project));

@@ -92,6 +92,7 @@ type SourceClipOption = {
   sourceIndex?: number
   baseName?: string
   ownerIdText?: string
+  path?: string
 }
 
 export const NativeMontagePage = () => {
@@ -113,6 +114,7 @@ export const NativeMontagePage = () => {
       sourceIndex: clip.sourceIndex,
       baseName: clip.baseName,
       ownerIdText: clip.ownerIdText,
+      path: clip.path,
     }))
   }, [payload])
 
@@ -158,6 +160,10 @@ export const NativeMontagePage = () => {
     if (selectedSourceOption.baseName && selectedSourceOption.ownerIdText) {
       commandPayload.sourceClipBaseName = selectedSourceOption.baseName
       commandPayload.sourceClipOwnerIdText = selectedSourceOption.ownerIdText
+    }
+
+    if (selectedSourceOption.path) {
+      commandPayload.sourceClipPath = selectedSourceOption.path
     }
 
     sendEditorCommand("add_clip_to_project", commandPayload)

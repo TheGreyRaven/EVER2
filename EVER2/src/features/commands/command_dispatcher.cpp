@@ -7,6 +7,7 @@
 #include "ever/features/replay_project_logger/replay_project_logger.h"
 #include "ever/platform/debug_console.h"
 #include "ever/utils/command_json_utils.h"
+#include "ever/utils/replay_clip_utils.h"
 
 #include <nlohmann/json.hpp>
 
@@ -271,8 +272,6 @@ void DispatchMessage(const std::string& payload) {
     if (action == "add_clip_to_project") {
         ever::platform::LogDebug(L"[EVER2] Command 'add_clip_to_project': ensuring editor project hooks on-demand.");
         const Json& data = parsed.data;
-        const int source_index = data.value("sourceClipIndex", -1);
-        const int destination_index = data.value("destinationIndex", -1);
         const std::string source_clip_name = data.value("sourceClipBaseName", std::string());
         const std::string source_owner_id_text = data.value("sourceClipOwnerIdText", std::string());
 
@@ -284,64 +283,62 @@ void DispatchMessage(const std::string& payload) {
             source_owner_id = data.value("sourceClipOwnerId", static_cast<uint64_t>(0));
         }
 
-        const bool synthetic_fallback_source =
-            source_owner_id == 0 && source_clip_name.rfind("Clip ", 0) == 0;
-        if (synthetic_fallback_source) {
+        if (source_clip_name.empty()) {
             SendCommandResponse(
                 action,
                 request_id,
                 "error",
-                "Only synthetic fallback clip rows are available right now. Reload project after native clip metadata is available, then retry Add clip.");
+                "sourceClipBaseName is required for add_clip_to_project.");
             return;
         }
 
         std::wstring add_error;
-        bool add_ok = false;
-        std::string add_mode = "index";
-        if (!source_clip_name.empty()) {
-            add_mode = "name";
-            add_ok = ever::features::rockstar_editor_menu::AddClipToCurrentProjectByName(
-                source_clip_name,
-                source_owner_id,
-                destination_index,
-                add_error);
-        } else {
-            add_ok = ever::features::rockstar_editor_menu::AddClipToCurrentProject(
-                source_index,
-                destination_index,
-                add_error);
-        }
+        int new_clip_count = 0;
+        const bool add_ok = ever::features::rockstar_editor_menu::AddClipToCurrentProjectByName(
+            source_clip_name,
+            source_owner_id,
+            -1,
+            add_error,
+            new_clip_count);
+
         if (!add_ok) {
             const std::wstring message = L"[EVER2] Command 'add_clip_to_project' failed: " + add_error;
             ever::platform::LogDebug(message.c_str());
-            Json extra;
-            extra["mode"] = add_mode;
-            SendCommandResponse(action, request_id, "error", WideToUtf8(add_error), extra);
+            SendCommandResponse(action, request_id, "error", WideToUtf8(add_error));
             return;
         }
 
-        std::string projects_payload;
-        std::wstring load_error;
-        if (ever::features::replay_project_logger::TryBuildProjectsJsonForUiTrigger(projects_payload, load_error)) {
-            Json projects_event = Json::parse(projects_payload, nullptr, false);
-            if (!projects_event.is_discarded() && projects_event.is_object() && !request_id.empty()) {
-                projects_event["requestId"] = request_id;
-                ever::browser::SendCefMessage(projects_event.dump());
-            } else {
-                ever::browser::SendCefMessage(projects_payload);
+        {
+            const std::string source_clip_path = data.value("sourceClipPath", std::string());
+            std::string clip_preview_disk_path;
+            bool clip_preview_exists = false;
+            if (!source_clip_path.empty()) {
+                const std::string clips_disk_dir =
+                    ever::utils::replay_clip::ReplayUriToDiskPath("replay:/videos/clips/");
+                const std::string preview_filename =
+                    ever::utils::replay_clip::GuessPreviewPath(source_clip_path);
+                if (!preview_filename.empty()) {
+                    clip_preview_disk_path = clips_disk_dir + preview_filename;
+                    clip_preview_exists =
+                        ever::utils::replay_clip::FileExists(clip_preview_disk_path);
+                }
             }
+
+            Json clip_added;
+            clip_added["event"] = "ever2_clip_added";
+            clip_added["newClipCount"] = new_clip_count;
+            clip_added["clipBaseName"] = source_clip_name;
+            clip_added["clipOwnerId"] = source_owner_id;
+            clip_added["clipPreviewDiskPath"] = clip_preview_disk_path;
+            clip_added["clipPreviewExists"] = clip_preview_exists;
+            ever::browser::SendCefMessage(clip_added.dump());
         }
 
         Json extra;
-        extra["sourceClipIndex"] = source_index;
-        if (!source_clip_name.empty()) {
-            extra["sourceClipBaseName"] = source_clip_name;
-        }
-        if (source_owner_id != 0) {
-            extra["sourceClipOwnerId"] = source_owner_id;
-        }
-        extra["destinationIndex"] = destination_index;
-        SendCommandResponse(action, request_id, "accepted", "Clip add requested through native project hooks.", extra);
+        extra["sourceClipBaseName"] = source_clip_name;
+        extra["sourceClipOwnerId"] = source_owner_id;
+        extra["newClipCount"] = new_clip_count;
+        SendCommandResponse(action, request_id, "accepted", "Clip add executed through native project hooks.", extra);
         return;
     }
 

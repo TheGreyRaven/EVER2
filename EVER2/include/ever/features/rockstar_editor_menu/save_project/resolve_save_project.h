@@ -2,6 +2,6 @@
 
 namespace ever::features::rockstar_editor_menu {
 
-void InstallPrepareStagingClipByIndexHookNoThrow();
+void ResolveSaveProjectNoThrow();
 
 }

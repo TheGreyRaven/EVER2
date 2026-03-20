@@ -18,7 +18,6 @@ enum class GameFunctionPatternId {
     ReplayMgrInternalCheckEnumerateProjectFiles,
     ReplayMgrInternalStartEnumerateClipFiles,
     ReplayMgrInternalCheckEnumerateClipFiles,
-    VideoEditorProjectPrepareStagingClipByIndex,
     VideoEditorProjectPrepareStagingClipByName,
     VideoEditorProjectMoveStagingClipToProject,
     VideoEditorProjectSaveProject,

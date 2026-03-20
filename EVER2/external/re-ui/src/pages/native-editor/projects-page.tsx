@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom"
-import { Loader2, ListFilter, Sparkles } from "lucide-react"
+import { Sparkles } from "lucide-react"
 
 import { sendEditorCommand } from "@/components/rockstar-editor/data"
 import { Button } from "@/components/ui/button"
@@ -15,14 +15,6 @@ export const NativeProjectsPage = () => {
   const navigate = useNavigate()
   const payload = useProjectStore((s) => s.payload)
   const selectedProject = useProjectStore((s) => s.selectedProject)
-  const isLoading = useProjectStore((s) => s.isLoading)
-  const setLoading = useProjectStore((s) => s.setLoading)
-
-  const handleLoad = () => {
-    setLoading(true)
-    sendEditorCommand("load_project")
-  }
-
   const handleEditProject = () => {
     if (!selectedProject) {
       return
@@ -43,25 +35,13 @@ export const NativeProjectsPage = () => {
       </Card>
 
       <Card className="flex min-h-0 min-w-0 flex-1 flex-col border-white/6 bg-black/16 p-5">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/22">
-              Project Details
-            </p>
-            <h2 className="mt-1 text-[22px] leading-none font-semibold text-white/88">
-              {selectedProject?.projectName || "Select a project"}
-            </h2>
-          </div>
-
-          <Button
-            variant="ghost"
-            className="border border-white/10 bg-white/2 text-white/70 hover:bg-white/5"
-            onClick={handleLoad}
-            disabled={isLoading}
-          >
-            {isLoading ? <Loader2 className="size-4 animate-spin" /> : <ListFilter className="size-4" />}
-            Refresh Native Payload
-          </Button>
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/22">
+            Project Details
+          </p>
+          <h2 className="mt-1 text-[22px] leading-none font-semibold text-white/88">
+            {selectedProject?.projectName || "Select a project"}
+          </h2>
         </div>
 
         <Separator className="my-4 bg-white/6" />

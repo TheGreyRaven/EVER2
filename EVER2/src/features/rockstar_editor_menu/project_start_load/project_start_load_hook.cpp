@@ -1,8 +1,11 @@
 #include "ever/features/rockstar_editor_menu/project_start_load/project_start_load_hook.h"
 
+#include "ever/browser/native_overlay_renderer.h"
 #include "ever/features/rockstar_editor_menu/internal/rockstar_editor_menu_state.h"
 #include "ever/hooking/game_function_patterns.h"
 #include "ever/platform/debug_console.h"
+
+#include <nlohmann/json.hpp>
 
 namespace ever::features::rockstar_editor_menu {
 
@@ -16,10 +19,23 @@ bool __fastcall HookedProjectStartLoad(void* this_ptr, const char* path) {
         g_last_project_path = path;
     }
 
+    g_montage_load_complete.store(false, std::memory_order_release);
+
     if (g_project_start_load_original == nullptr) {
         return false;
     }
-    return g_project_start_load_original(this_ptr, path);
+
+    const bool result = g_project_start_load_original(this_ptr, path);
+
+    g_montage_load_complete.store(true, std::memory_order_release);
+
+    nlohmann::json evt;
+    evt["event"] = "ever2_project_loaded";
+    ever::browser::SendCefMessage(evt.dump());
+
+    ever::platform::LogDebug(L"[EVER2] ProjectStartLoad complete — CMontage ready, signalled ever2_project_loaded.");
+
+    return result;
 }
 
 }

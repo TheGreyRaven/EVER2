@@ -11,26 +11,24 @@ using RtlLookupFunctionEntryFn = PRUNTIME_FUNCTION(NTAPI*)(DWORD64, PDWORD64, PU
 
 }
 
-std::shared_ptr<PLH::x64Detour> g_prepare_clip_detour;
-std::shared_ptr<PLH::x64Detour> g_move_clip_detour;
-std::shared_ptr<PLH::x64Detour> g_save_project_detour;
 std::shared_ptr<PLH::x64Detour> g_project_start_load_detour;
+std::shared_ptr<PLH::x64Detour> g_montage_load_detour;
 
-PrepareStagingClipByIndexFn g_prepare_clip_original = nullptr;
 PrepareStagingClipByNameFn g_prepare_clip_by_name = nullptr;
 MoveStagingClipToProjectFn g_move_clip_original = nullptr;
 SaveProjectFn g_save_project_original = nullptr;
 StartLoadProjectFn g_start_load_project = nullptr;
 ProjectStartLoadFn g_project_start_load_original = nullptr;
+MontageLoadFn g_montage_load_original = nullptr;
 
 std::atomic<void*> g_last_project_ptr{nullptr};
+std::atomic<bool> g_montage_load_complete{false};
 std::atomic<uint64_t> g_hook_hits{0};
 std::atomic<uint32_t> g_install_attempts{0};
 std::atomic<ULONGLONG> g_last_install_attempt_tick{0};
 std::mutex g_install_mutex;
 std::mutex g_project_path_mutex;
 std::string g_last_project_path;
-bool g_last_save_spinner_preference = true;
 
 uint64_t ResolveFunctionStartFromUnwind(uint64_t hit_address, uint64_t module_base, uint64_t module_size) {
     if (hit_address == 0 || module_base == 0 || module_size == 0) {

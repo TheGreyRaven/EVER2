@@ -14,36 +14,64 @@ import { useProjectStore } from "@/store/project-store"
 export const useCefEvents = () => {
   const setPayload = useProjectStore((s) => s.setPayload)
   const setLoading = useProjectStore((s) => s.setLoading)
+  const setMontageReady = useProjectStore((s) => s.setMontageReady)
   const setLastCommandResponse = useProjectStore(
     (s) => s.setLastCommandResponse
   )
+  const appendClipToSelectedProject = useProjectStore(
+    (s) => s.appendClipToSelectedProject
+  )
 
   useEffect(() => {
-    const handleCefEvent = (event: Event) => {
-      const custom = event as CustomEvent<unknown>
-      const payload = parseReplayProjectsPayload(custom.detail)
+    const handleCefData = (data: unknown) => {
+      const payload = parseReplayProjectsPayload(data)
       if (payload) setPayload(payload)
 
-      const response = parseEditorCommandResponse(custom.detail)
+      const response = parseEditorCommandResponse(data)
       if (response) {
         setLastCommandResponse(response)
         if (response.action === "load_project") {
           setLoading(false)
         }
+      }
+
+      if (
+        data !== null &&
+        typeof data === "object" &&
+        (data as Record<string, unknown>)["event"] === "ever2_project_loaded"
+      ) {
+        setMontageReady(true)
+      }
+
+      if (
+        data !== null &&
+        typeof data === "object" &&
+        (data as Record<string, unknown>)["event"] === "ever2_clip_added"
+      ) {
+        const d = data as Record<string, unknown>
+        const baseName =
+          typeof d.clipBaseName === "string" ? d.clipBaseName : ""
+        const ownerIdText =
+          d.clipOwnerId !== undefined ? String(d.clipOwnerId) : "0"
+        const previewDiskPath =
+          typeof d.clipPreviewDiskPath === "string" ? d.clipPreviewDiskPath : ""
+        const previewExists =
+          typeof d.clipPreviewExists === "boolean" ? d.clipPreviewExists : false
+        appendClipToSelectedProject(
+          baseName,
+          ownerIdText,
+          previewDiskPath,
+          previewExists
+        )
       }
     }
 
-    const handleWindowMessage = (event: MessageEvent<unknown>) => {
-      const payload = parseReplayProjectsPayload(event.data)
-      if (payload) setPayload(payload)
+    const handleCefEvent = (event: Event) => {
+      handleCefData((event as CustomEvent<unknown>).detail)
+    }
 
-      const response = parseEditorCommandResponse(event.data)
-      if (response) {
-        setLastCommandResponse(response)
-        if (response.action === "load_project") {
-          setLoading(false)
-        }
-      }
+    const handleWindowMessage = (event: MessageEvent<unknown>) => {
+      handleCefData(event.data)
     }
 
     window.addEventListener("ever:cef:message", handleCefEvent as EventListener)
@@ -56,5 +84,11 @@ export const useCefEvents = () => {
       )
       window.removeEventListener("message", handleWindowMessage)
     }
-  }, [setLastCommandResponse, setLoading, setPayload])
+  }, [
+    appendClipToSelectedProject,
+    setLastCommandResponse,
+    setLoading,
+    setMontageReady,
+    setPayload,
+  ])
 }

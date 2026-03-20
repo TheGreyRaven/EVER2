@@ -89,11 +89,6 @@ const char* const kReplayMgrInternalCheckEnumerateClipFilesPatterns[] = {
     nullptr,
 };
 
-const char* const kVideoEditorProjectPrepareStagingClipByIndexPatterns[] = {
-    "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 33 DB 8B F2 48 8B F9 48 39 99 20 03 00 00 74 2D E8 ?? ?? ?? ?? 48 8B 8F 20 03 00 00 8B D6 E8 ?? ?? ?? ?? 48 85 C0 74 15 48 8B D0 48 8B CF E8 ?? ?? ?? ?? 48 8B CF E8 ?? ?? ?? ?? B3 01",
-    nullptr,
-};
-
 const char* const kVideoEditorProjectPrepareStagingClipByNamePatterns[] = {
     "48 8B C4 48 89 58 08 48 89 68 10 48 89 70 18 48 89 78 20 41 56 48 83 EC 30 33 DB 41 8B F1 49",
     nullptr,
@@ -153,8 +148,6 @@ const char* const* GetGameFunctionPatternCandidates(GameFunctionPatternId id) {
         return kReplayMgrInternalStartEnumerateClipFilesPatterns;
     case GameFunctionPatternId::ReplayMgrInternalCheckEnumerateClipFiles:
         return kReplayMgrInternalCheckEnumerateClipFilesPatterns;
-    case GameFunctionPatternId::VideoEditorProjectPrepareStagingClipByIndex:
-        return kVideoEditorProjectPrepareStagingClipByIndexPatterns;
     case GameFunctionPatternId::VideoEditorProjectPrepareStagingClipByName:
         return kVideoEditorProjectPrepareStagingClipByNamePatterns;
     case GameFunctionPatternId::VideoEditorProjectMoveStagingClipToProject:
@@ -202,8 +195,6 @@ const char* GetGameFunctionPatternName(GameFunctionPatternId id) {
         return "CReplayMgrInternal::StartEnumerateClipFiles";
     case GameFunctionPatternId::ReplayMgrInternalCheckEnumerateClipFiles:
         return "CReplayMgrInternal::CheckEnumerateClipFiles";
-    case GameFunctionPatternId::VideoEditorProjectPrepareStagingClipByIndex:
-        return "CVideoEditorProject::PrepareStagingClip";
     case GameFunctionPatternId::VideoEditorProjectPrepareStagingClipByName:
         return "CVideoEditorProject::PrepareStagingClip(name, ownerId, transitions)";
     case GameFunctionPatternId::VideoEditorProjectMoveStagingClipToProject:

@@ -396,6 +396,14 @@ public:
             return true;
         }
 
+        if (ext == ".jpg" || ext == ".jpeg") {
+            std::error_code log_ec;
+            const bool phys = std::filesystem::exists(abs_path, log_ec) &&
+                              std::filesystem::is_regular_file(abs_path, log_ec);
+            Log((L"[EVER2][AssetReq] jpg abs='" + abs_path.wstring() +
+                 L"' phys=" + (phys ? L"1" : L"0")).c_str());
+        }
+
         std::error_code ec;
         if (!std::filesystem::exists(abs_path, ec) || !std::filesystem::is_regular_file(abs_path, ec)) {
             callback->Continue();
